@@ -144,7 +144,7 @@ public class BlockNestedJoin extends Join {
                     if (rcurs == 0 && lcurs == 0 && lblockcurs == 0) {
                         rightbatch = (Batch) in.readObject();
                     }
-                    for (int k = 0; k < leftblock.size(); k++) {
+                    for (int k = lblockcurs; k < leftblock.size(); k++) {
                         Batch leftbatch = leftblock.get(k);
                         for (i = lcurs; i < leftbatch.size(); ++i) {
                             for (j = rcurs; j < rightbatch.size(); ++j) {
