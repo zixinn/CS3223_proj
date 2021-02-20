@@ -107,8 +107,8 @@ public class BlockNestedJoin extends Join {
      * * And returns a page of output tuples
      **/
     public Batch next() {
-        int i, j;
-        if (eosl) {
+        int i, j, k;
+        if (eosl == true && lblockcurs == 0 && lcurs == 0) {
             return null;
         }
         outbatch = new Batch(batchsize);
@@ -116,7 +116,7 @@ public class BlockNestedJoin extends Join {
             if (lcurs == 0 && lblockcurs == 0 && eosr == true) {
                 /** new left block is to be fetched**/
                 leftblock.clear();
-                for (int k = 0; k < blocksize; k++) {
+                for (k = 0; k < blocksize; k++) {
                     Batch leftbatch = (Batch) left.next();
                     if (leftbatch == null) {
                         eosl = true;
@@ -144,7 +144,7 @@ public class BlockNestedJoin extends Join {
                     if (rcurs == 0 && lcurs == 0 && lblockcurs == 0) {
                         rightbatch = (Batch) in.readObject();
                     }
-                    for (int k = lblockcurs; k < leftblock.size(); k++) {
+                    for (k = lblockcurs; k < leftblock.size(); k++) {
                         Batch leftbatch = leftblock.get(k);
                         for (i = lcurs; i < leftbatch.size(); ++i) {
                             for (j = rcurs; j < rightbatch.size(); ++j) {
@@ -154,22 +154,26 @@ public class BlockNestedJoin extends Join {
                                     Tuple outtuple = lefttuple.joinWith(righttuple);
                                     outbatch.add(outtuple);
                                     if (outbatch.isFull()) {
-                                        if (k == leftblock.size() - 1 && i == leftbatch.size() - 1 && j == rightbatch.size() - 1) {  //case 1 : just done with entire left block
+                                        if (k == leftblock.size() - 1 && i == leftbatch.size() - 1 && j == rightbatch.size() - 1) {  // case 1 : just done with entire left block
                                             lblockcurs = 0;
                                             lcurs = 0;
                                             rcurs = 0;
-                                        } else if (i != leftbatch.size() - 1 && j == rightbatch.size() - 1) {  //case 2: still on same block, just done with a leftbatch
-                                            lblockcurs = k;
-                                            lcurs = i + 1;
-                                            rcurs = 0;
-                                        } else if (i == leftbatch.size() - 1 && j != rightbatch.size() - 1) {  //case 3: still on same block, same leftbatch, iterating through rightbatch
-                                            lblockcurs = k;
-                                            lcurs = i;
-                                            rcurs = j + 1;
-                                        } else { // case 4: done with the current leftbatch, move on to next
+                                        } else if (k != leftblock.size() - 1 && i == leftbatch.size() - 1 && j == rightbatch.size() - 1) { // case 2: done with the current leftblock, move on to next
                                             lblockcurs = k + 1;
                                             lcurs = 0;
                                             rcurs = 0;
+                                        } else if (i != leftbatch.size() - 1 && j == rightbatch.size() - 1) {  // case 3: still on same block, just done with a leftbatch
+                                            lblockcurs = k;
+                                            lcurs = i + 1;
+                                            rcurs = 0;
+                                        } else if (i == leftbatch.size() - 1 && j != rightbatch.size() - 1) {  // case 4: still on same block, same leftbatch, iterating through rightbatch
+                                            lblockcurs = k;
+                                            lcurs = i;
+                                            rcurs = j + 1;
+                                        } else { // case 5: still on same block, same leftbatch, iterating through rightbatch
+                                            lblockcurs = k;
+                                            lcurs = i;
+                                            rcurs = j + 1;
                                         }
                                         return outbatch;
                                     }
