@@ -76,6 +76,8 @@ public class PlanCost {
             return getStatistics((Project) node);
         } else if (node.getOpType() == OpType.SCAN) {
             return getStatistics((Scan) node);
+        } else if (node.getOpType() == OpType.DISTINCT) {
+            return getStatistics((Distinct) node);
         }
         System.out.println("operator is not supported");
         isFeasible = false;
@@ -153,6 +155,11 @@ public class PlanCost {
         cost = cost + joincost;
 
         return outtuples;
+    }
+
+    protected long getStatistics(Distinct node) {
+        // TODO calculate cost for distinct
+        return 1;
     }
 
     /**
