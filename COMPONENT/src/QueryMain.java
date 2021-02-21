@@ -30,6 +30,21 @@ public class QueryMain {
         SQLQuery sqlquery = getSQLQuery(args[0]);
         configureBufferManager(sqlquery.getNumJoin(), args, in);
 
+        //TODO properly configure buffer for distinct
+        int numBuff = 0;
+        if (sqlquery.isDistinct()) {
+            if (args.length < 4) {
+                System.out.println("enter the number of buffers available");
+                try {
+                    String temp = in.readLine();
+                    numBuff = Integer.parseInt(temp);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            } else numBuff = Integer.parseInt(args[3]);
+            BufferManager bm = new BufferManager(numBuff, 1);
+        }
+
         Operator root = getQueryPlan(sqlquery);
         printFinalPlan(root, args, in);
         executeQuery(root, args[1]);
