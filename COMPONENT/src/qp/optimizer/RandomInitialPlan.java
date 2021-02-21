@@ -33,6 +33,7 @@ public class RandomInitialPlan {
         selectionlist = sqlquery.getSelectionList();
         joinlist = sqlquery.getJoinList();
         groupbylist = sqlquery.getGroupByList();
+        orderbylist = sqlquery.getOrderByList();
         numJoin = joinlist.size();
     }
 
@@ -58,10 +59,11 @@ public class RandomInitialPlan {
             System.exit(1);
         }
 
-        if (sqlquery.getOrderByList().size() > 0) {
-            System.err.println("Orderby is not implemented.");
-            System.exit(1);
-        }
+        //if (sqlquery.getOrderByList().size() > 0) {
+        //    System.err.println("Orderby is not implemented.");
+         //   System.exit(1);
+        //}
+
 
         tab_op_hash = new HashMap<>();
         createScanOp();
