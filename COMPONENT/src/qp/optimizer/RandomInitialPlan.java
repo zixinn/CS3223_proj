@@ -22,6 +22,7 @@ public class RandomInitialPlan {
     ArrayList<Condition> selectionlist;   // List of select conditons
     ArrayList<Condition> joinlist;        // List of join conditions
     ArrayList<Attribute> groupbylist;
+    ArrayList<Attribute> orderbylist;
     int numJoin;            // Number of joins in this query
     HashMap<String, Operator> tab_op_hash;  // Table name to the Operator
     Operator root;          // Root of the query plan tree
@@ -33,6 +34,7 @@ public class RandomInitialPlan {
         selectionlist = sqlquery.getSelectionList();
         joinlist = sqlquery.getJoinList();
         groupbylist = sqlquery.getGroupByList();
+        orderbylist = sqlquery.getOrderByList();
         numJoin = joinlist.size();
     }
 
@@ -48,20 +50,13 @@ public class RandomInitialPlan {
      **/
     public Operator prepareInitialPlan() {
 
-        if (sqlquery.isDistinct()) {
-            System.err.println("Distinct is not implemented.");
-            System.exit(1);
-        }
-
         if (sqlquery.getGroupByList().size() > 0) {
             System.err.println("GroupBy is not implemented.");
             System.exit(1);
         }
 
-        if (sqlquery.getOrderByList().size() > 0) {
-            System.err.println("Orderby is not implemented.");
-            System.exit(1);
-        }
+
+
 
         tab_op_hash = new HashMap<>();
         createScanOp();
@@ -70,6 +65,14 @@ public class RandomInitialPlan {
             createJoinOp();
         }
         createProjectOp();
+
+        if (sqlquery.isDistinct()) {
+            createDistinctOp();
+        }
+
+        if (!orderbylist.isEmpty()) {
+            createOrderByOp();
+        }
 
         return root;
     }
@@ -191,6 +194,26 @@ public class RandomInitialPlan {
             Schema newSchema = base.getSchema().subSchema(projectlist);
             root.setSchema(newSchema);
         }
+    }
+
+    public void createDistinctOp() {
+        Operator base = root;
+        if (projectlist == null)
+            projectlist = new ArrayList<Attribute>();
+        if (!projectlist.isEmpty()) {
+            root = new Distinct(base, projectlist);
+            Schema newSchema = base.getSchema().subSchema(projectlist);
+            root.setSchema(newSchema);
+        }
+    }
+
+    public void createOrderByOp() {
+        Schema rootSchema = root.getSchema();
+        ArrayList attributes = rootSchema.getAttList();
+
+        Operator base = new OrderBy(root, attributes, orderbylist, sqlquery.isAscending());
+        root = base;
+        root.setSchema(rootSchema);
     }
 
     private void modifyHashtable(Operator old, Operator newop) {

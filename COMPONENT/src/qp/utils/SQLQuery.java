@@ -23,6 +23,8 @@ public class SQLQuery {
 
     boolean isDistinct = false;          // Whether distinct key word appeared in select clause
 
+    boolean isAscending = true;         // Whether the orderby is ascending
+
     public SQLQuery(ArrayList<Attribute> list1, ArrayList<String> list2, ArrayList<Condition> list3) {
         projectList = list1;
         fromList = list2;
@@ -74,6 +76,14 @@ public class SQLQuery {
 
     public boolean isDistinct() {
         return isDistinct;
+    }
+
+    public void setAscending(boolean flag) {
+        isAscending = flag;
+    }
+
+    public boolean isAscending() {
+        return isAscending;
     }
 
     public ArrayList<Attribute> getProjectList() {
