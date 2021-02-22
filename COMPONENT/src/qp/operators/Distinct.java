@@ -20,7 +20,17 @@ public class Distinct extends Operator {
     Batch outbatch;                 // Buffer for output stream
     ArrayList<Tuple> tuples;        // The tuples in-memory
     ObjectInputStream in;           // File pointer to the sorted runs file
+
+    // For merging
     ArrayList<ObjectInputStream> sortedRunFiles; // Input file pointers for each sorted run
+    boolean[] eof;                                 // keep track of eof of each file
+    Batch[] inBufferPages;
+    int page;
+    boolean eos;                                 // eos for everything
+    Tuple prevAddedTuple;
+    Tuple nextTupleToAdd;
+    int start, stop;
+
 
     int numRun;                     // Count number of sorted runs generated
     int mergecurs;                    // Cursor to keep track of the number of passes of merge
@@ -137,12 +147,12 @@ public class Distinct extends Operator {
     }
 
     private boolean multiWayMerge() {
-        int start = 0;
-        int stop;
+        start = 0;
         while (numRun - 1 > start) {
             if (numRun - start > numBuff - 1) {
                 stop = start + numBuff - 2;
             } else {
+                // Last Pass
                 stop = numRun - 1;
             }
             merge(start, stop);
@@ -155,8 +165,8 @@ public class Distinct extends Operator {
         mergecurs++;
 
         System.out.println("========== Run curs: " + mergecurs + " Numrun " + numRun + " Start " + start + " stop: " + stop + " numbuff - 1: " + (numBuff-1));
-        boolean[] eof = new boolean[stop - start + 1];   // keep track of eof of each file
-        Batch[] inBufferPages = new Batch[stop - start + 1];;          // Buffer pages for merging
+        eof = new boolean[stop - start + 1];   // keep track of eof of each file
+        inBufferPages = new Batch[stop - start + 1];;          // Buffer pages for merging
 
         ObjectInputStream merged = null;
 
@@ -198,11 +208,8 @@ public class Distinct extends Operator {
             inBufferPages[i-start] = nextBatch;
         }
 
-        boolean eos = true; // eos for everything
-        Batch outbatch = new Batch(batchsize);
-        Tuple prevAddedTuple = null;
-        Tuple nextTupleToAdd;
-        int page;
+        eos = true; // eos for everything
+        prevAddedTuple = null;
         for (int i = 0; i < stop - start + 1; i++) {
             if (!eof[i]) {
                 eos = false;
@@ -314,7 +321,7 @@ public class Distinct extends Operator {
                 prevAddedTuple = nextTupleToAdd;
             }
 
-            // write to sorted run last file
+            // write to Merged file
             try {
                 System.out.println("            size of outbatch: " + outbatch.size());
                 for (int i = 0; i < outbatch.size(); i++) {
