@@ -24,12 +24,15 @@ public class SortedRun extends Operator {
     boolean eos_unsorted;           // Whether end of stream (unsorted result) is reached
     boolean eos_sorted;             // Whether end of stream (sorted result) is reached
 
-    public SortedRun(Operator base, ArrayList<Integer> attrIndex, int numBuff) {
+    boolean isAscending;            //Sort ascending or descending
+
+    public SortedRun(Operator base, ArrayList<Integer> attrIndex, int numBuff, boolean isAscending) {
         super(OpType.SORT);
         this.base = base;
         this.schema = base.schema;
         this.numBuff = numBuff;
         this.attrIndex = attrIndex;
+        this.isAscending = isAscending;
     }
 
     public Operator getBase() {
@@ -118,7 +121,9 @@ public class SortedRun extends Operator {
             }
 
             // In-mem sorting
-            Collections.sort(tuples, (t1, t2) -> Tuple.compareTuples(t1, t2, attrIndex, attrIndex));
+            //Collections.sort(tuples, (t1, t2) -> Tuple.compareTuples(t1, t2, attrIndex, attrIndex));
+            
+            Collections.sort(tuples, (t1, t2) -> isAscending? Tuple.compareTuples(t1, t2, attrIndex, attrIndex) : Tuple.compareTuples(t1, t2, attrIndex, attrIndex) * -1);
 
             numRun++;
             fname = "SortedRun-" + String.valueOf(numRun);

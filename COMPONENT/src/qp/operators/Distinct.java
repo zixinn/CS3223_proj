@@ -77,7 +77,7 @@ public class Distinct extends Operator {
             attrIndex.add(index);
         }
 
-        sortedRun = new SortedRun(base, attrIndex, numBuff);
+        sortedRun = new SortedRun(base, attrIndex, numBuff, true);
         boolean generatedSortedRuns = sortedRun.open();
 
         // Load the sorted runs into the input buffers
