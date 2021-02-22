@@ -23,7 +23,7 @@ public class Distinct extends Operator {
     ArrayList<ObjectInputStream> sortedRunFiles; // Input file pointers for each sorted run
 
     int numRun;                     // Count number of sorted runs generated
-    int runcurs;                    // Cursor to keep track of which file we are at
+    int mergecurs;                    // Cursor to keep track of the number of passes of merge
     boolean eos_unsorted;           // Whether end of stream (unsorted result) is reached
     boolean eos_sorted;             // Whether end of stream (sorted result) is reached
 
@@ -56,7 +56,7 @@ public class Distinct extends Operator {
         batchsize = Batch.getPageSize() / tuplesize;
 
         eos_unsorted = false;
-        runcurs = 0;
+        mergecurs = 0;
         eos_sorted = false;
         tuples = new ArrayList<>();
         sortedRunFiles = new ArrayList<>();
@@ -96,7 +96,7 @@ public class Distinct extends Operator {
 
         success = success && multiWayMerge();
         try {
-            fname = "Merge-" + String.valueOf(runcurs);
+            fname = "Merge-" + String.valueOf(mergecurs);
             System.out.println(" ~~~~~~ READING FROM: " + fname);
             in = new ObjectInputStream(new FileInputStream(fname));
         } catch (IOException e) {
@@ -152,53 +152,37 @@ public class Distinct extends Operator {
     }
 
     private boolean merge(int start, int stop) {
-        //sortedRunFiles.clear();
-        runcurs++;
+        mergecurs++;
 
-        System.out.println("========== Run curs: " + runcurs + " Numrun " + numRun + " Start " + start + " stop: " + stop + " numbuff - 1: " + (numBuff-1));
+        System.out.println("========== Run curs: " + mergecurs + " Numrun " + numRun + " Start " + start + " stop: " + stop + " numbuff - 1: " + (numBuff-1));
         boolean[] eof = new boolean[stop - start + 1];   // keep track of eof of each file
         Batch[] inBufferPages = new Batch[stop - start + 1];;          // Buffer pages for merging
 
         ObjectInputStream merged = null;
 
         // Load the sorted runs into the input buffers
-        if (start == 0) {
-            // first pass --> load all batches from SortedRun files
-            Batch nextBatch = null;
-            try {
+        Batch nextBatch = null;
+        try {
+            if (start == 0) {
                 nextBatch = (Batch) sortedRunFiles.get(0).readObject();
-            } catch (EOFException e) {
-                eof[0] = true;
-                nextBatch = null;
-            } catch (IOException io) {
-                System.err.println("Distinct:error in reading the sorted run file");
-                System.exit(1);
-            } catch (ClassNotFoundException c) {
-                System.out.println("Distinct: Error in deserialising sorted run file ");
-                System.exit(1);
-            }
-            inBufferPages[0] = nextBatch;
-        } else {
-            // not first pass --> load a batch from the Merged file, the rest from sortedRun files
-            Batch nextBatch = null;
-            try {
-                merged = new ObjectInputStream(new FileInputStream("Merge-" + (runcurs-1)));
+            } else {
+                merged = new ObjectInputStream(new FileInputStream("Merge-" + (mergecurs -1)));
                 nextBatch = (Batch) merged.readObject();
-            } catch (EOFException e) {
-                eof[0] = true;
-                nextBatch = null;
-            } catch (IOException io) {
-                System.err.println("Distinct:error in reading the sorted run file");
-                System.exit(1);
-            } catch (ClassNotFoundException c) {
-                System.out.println("Distinct: Error in deserialising sorted run file ");
-                System.exit(1);
             }
-            inBufferPages[0] = nextBatch;
+        } catch (EOFException e) {
+            eof[0] = true;
+            nextBatch = null;
+        } catch (IOException io) {
+            System.err.println("Distinct:error in reading the sorted run file");
+            System.exit(1);
+        } catch (ClassNotFoundException c) {
+            System.out.println("Distinct: Error in deserialising sorted run file ");
+            System.exit(1);
         }
+        inBufferPages[0] = nextBatch;
 
         for (int i = start + 1; i < stop; i++) {
-            Batch nextBatch = null;
+            nextBatch = null;
             try {
                 nextBatch = (Batch) sortedRunFiles.get(i).readObject();
             } catch (EOFException e) {
@@ -231,7 +215,7 @@ public class Distinct extends Operator {
 
         // materialise file to write output for merge
         ObjectOutputStream out;
-        fname = "Merge-" + String.valueOf(runcurs);
+        fname = "Merge-" + String.valueOf(mergecurs);
         try {
             out = new ObjectOutputStream(new FileOutputStream(fname));
         } catch (IOException io) {
@@ -294,7 +278,6 @@ public class Distinct extends Operator {
                 if (inBufferPages[page].isEmpty()) {
                     System.out.println("empty");
                     try {
-                        Batch nextBatch;
                         if (start == 0 || page > 0) {
                             nextBatch = (Batch) sortedRunFiles.get(page+start).readObject();
                         } else {
@@ -347,12 +330,6 @@ public class Distinct extends Operator {
         try {
             System.out.println("Closing ObjectOutputStream with fname: " + fname);
             out.close();
-
-            // close all input streams
-//            for (int i = 0; i < sortedRunFiles.size(); i++) {
-//                sortedRunFiles.get(i).close();
-//            }
-
         } catch (IOException io) {
             System.out.println("Distinct: Error writing sorted runs to file");
             return false;
@@ -417,6 +394,10 @@ public class Distinct extends Operator {
     public boolean close() {
         for (int i = 1; i <= numRun; i++) {
             File f = new File("SortedRun-" + String.valueOf(i));
+            f.delete();
+        }
+        for (int i = 1; i <= mergecurs; i++) {
+            File f = new File("Merge-" + String.valueOf(i));
             f.delete();
         }
         return true;
