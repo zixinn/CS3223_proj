@@ -7,7 +7,8 @@ import qp.utils.Tuple;
 
 import java.io.*;
 import java.util.ArrayList;
-import java.util.Collections;
+import java.util.Comparator;
+import java.util.TreeSet;
 
 public class Distinct extends Operator {
 
@@ -18,7 +19,7 @@ public class Distinct extends Operator {
     ArrayList<Attribute> attrset;   // Set of atttributes to sort
     int numBuff;                    // Number of buffers available
     Batch outbatch;                 // Buffer for output stream
-    ArrayList<Tuple> tuples;        // The tuples in-memory
+    TreeSet<Tuple> tuples;        // The tuples in-memory
     ObjectInputStream in;           // File pointer to the sorted runs file
 
     // For merging
@@ -68,7 +69,12 @@ public class Distinct extends Operator {
         eos_unsorted = false;
         mergecurs = 0;
         eos_sorted = false;
-        tuples = new ArrayList<>();
+        tuples = new TreeSet<>(new Comparator<Tuple>() {
+            @Override
+            public int compare(Tuple o1, Tuple o2) {
+                return compareTuples(o1, o2);
+            }
+        });
         sortedRunFiles = new ArrayList<>();
 
         if (!base.open()) return false;
@@ -105,14 +111,21 @@ public class Distinct extends Operator {
         }
 
         success = success && multiWayMerge();
-        try {
+        System.out.println("Number of sorted Runs: " + numRun);
+        if (numRun > 1) {
             fname = "Merge-" + String.valueOf(mergecurs);
+        } else {
+            // Only 1 sortedrun generated.
+            fname = "SortedRun-" + String.valueOf(1);
+        }
+        try {
             System.out.println(" ~~~~~~ READING FROM: " + fname);
             in = new ObjectInputStream(new FileInputStream(fname));
         } catch (IOException e) {
             System.err.println("Distinct:error in reading the merged run file");
             System.exit(1);
         }
+
         return success;
     }
 
@@ -191,7 +204,7 @@ public class Distinct extends Operator {
         }
         inBufferPages[0] = nextBatch;
 
-        for (int i = start + 1; i < stop; i++) {
+        for (int i = start + 1; i <= stop; i++) {
             nextBatch = null;
             try {
                 nextBatch = (Batch) sortedRunFiles.get(i).readObject();
@@ -312,12 +325,12 @@ public class Distinct extends Operator {
                 }
                 if (compareTuples(prevAddedTuple, nextTupleToAdd) == 0) {
                     // duplicates
-                    System.out.println("Duplicate: " + nextTupleToAdd.dataAt(0) + " from page " + page);
+                    System.out.println("Duplicate: " + nextTupleToAdd.dataAt(0) + " " + nextTupleToAdd.dataAt(1) + " from page " + page);
                     continue;
                 }
                 // Add to outbatch
                 outbatch.add(nextTupleToAdd);
-                System.out.println("Added: " + nextTupleToAdd.dataAt(0) + " taken from page " + page);
+                System.out.println("Added: " + nextTupleToAdd.dataAt(0) + " " + nextTupleToAdd.dataAt(1) + " taken from page " + page);
                 prevAddedTuple = nextTupleToAdd;
             }
 
@@ -356,7 +369,6 @@ public class Distinct extends Operator {
 
     private boolean generateSortedRuns() {
         while (!eos_unsorted) {
-
             for (int i = 0; i < numBuff; i++) {
                 Batch batch = base.next();
                 if (batch == null) {
@@ -372,9 +384,6 @@ public class Distinct extends Operator {
                 return true;
             }
 
-            // In-mem sorting
-            Collections.sort(tuples, (t1, t2) -> Tuple.compareTuples(t1, t2, attrIndex, attrIndex));
-
             numRun++;
             fname = "SortedRun-" + String.valueOf(numRun);
             // Write sorted runs to files
@@ -383,7 +392,7 @@ public class Distinct extends Operator {
                 while (!tuples.isEmpty()) {
                     Batch batch = new Batch(batchsize);
                     while (!batch.isFull() && !tuples.isEmpty()) {
-                        batch.add(tuples.remove(0));
+                        batch.add(tuples.pollFirst());
                     }
                     out.writeObject(batch);
                 }
