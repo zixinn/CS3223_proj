@@ -27,6 +27,7 @@ public class HashJoin extends Join{
     ObjectInputStream inleft;       // File pointer to the left hand materialized file
     ObjectInputStream inright;      // File pointer to the right hand materialized file
     ArrayList<Batch> hashtable;     // Hash table for joining phase
+    Join join;
 
     int lcurs;                      // Cursor for left side buffer
     int rcurs;                      // Cursor for right side buffer
@@ -65,6 +66,8 @@ public class HashJoin extends Join{
             leftindex.add(left.getSchema().indexOf(leftattr));
             rightindex.add(right.getSchema().indexOf(rightattr));
         }
+
+        join = null;
 
         /** initialize the cursors of input buffers **/
         lcurs = 0; 
@@ -170,6 +173,16 @@ public class HashJoin extends Join{
         outbatch = new Batch(batchsize);
         while (!outbatch.isFull()) {
             if (lcurs == 0 && rcurs == 0 && eosr == true) {
+                if (join != null) {
+                    outbatch = join.next();
+                    if (outbatch == null) {
+                        join.close();
+                        join = null;
+                    } else {
+                        return outbatch;
+                    }
+                }
+
                 if (pcurs == numBuff - 2 && eosl == true) {
                     done = true;
                     return outbatch;
@@ -224,90 +237,55 @@ public class HashJoin extends Join{
                         int partitionnum = key % (numBuff - 2);
                         hashtable.get(partitionnum).add(tuple);
                         if (hashtable.get(partitionnum).size() >= leftbatchsize) { // partition cannot fit into memory
-                            String tfname = "HJtemp-" + String.valueOf(pcurs) + this.hashCode();
-                            eosl = false;
+                            lcurs = 0;
+                            rcurs = 0;
+                            eosl = true;
+                            eosr = true;
                             full = true;
-                            try {
-                                // store the remaining data in the partition to temp file
-                                ObjectOutputStream tempout = new ObjectOutputStream(new FileOutputStream(tfname));
-                                for (int k = 0; k <= i; k++) {
-                                    leftbatch.remove(0);
-                                }
-                                tempout.writeObject(leftbatch);
-                                while (true) {
-                                    try {
-                                        tempout.writeObject(inleft.readObject());
-                                    } catch (EOFException e) {
-                                        try {
-                                            inleft.close();
-                                            tempout.close();
-                                            File f = new File(lfname);
-                                            f.delete();
-                                            break;
-                                        } catch (IOException io) {
-                                            System.out.println("HashJoin: Error in reading temporary file");
-                                        }
-                                    } catch (ClassNotFoundException c) {
-                                        System.out.println("HashJoin: Error in deserialising temporary file ");
-                                        System.exit(1);
-                                    } catch (IOException io) {
-                                        System.out.println("HashJoin: Error in reading/writing temporary file");
-                                        System.exit(1);
-                                    }
-                                }
-
-                                // write the remaining data back to the file for the partition
-                                ObjectInputStream tempin = new ObjectInputStream(new FileInputStream(tfname));
-                                ObjectOutputStream outleft = new ObjectOutputStream(new FileOutputStream(lfname));
-                                while (true) {
-                                    try {
-                                        outleft.writeObject(tempin.readObject());
-                                    } catch (EOFException e) {
-                                        try {
-                                            outleft.close();
-                                            tempin.close();
-                                            File f = new File(tfname);
-                                            f.delete();
-                                            break;
-                                        } catch (IOException io) {
-                                            System.out.println("HashJoin: Error in reading temporary file");
-                                        }
-                                    } catch (ClassNotFoundException c) {
-                                        System.out.println("HashJoin: Error in deserialising temporary file ");
-                                        System.exit(1);
-                                    } catch (IOException io) {
-                                        System.out.println("HashJoin: Error in reading/writing temporary file");
-                                        System.exit(1);
-                                    }
-                                }
-                            } catch (IOException io) {
-                                System.out.println("HashJoin: Error writing to temporary file");
-                                System.exit(1);
-                            }
                             break;
                         }
                     }
                 }
 
-                // read right partition
-                try {
-                    rightbatch = (Batch) inright.readObject();
-                } catch (EOFException e) {
+                if (full == true) {
+                    Scan s1 = new Scan(lfname, OpType.SCAN, true);
+                    s1.setSchema(left.schema);
+                    Scan s2 = new Scan(rfname, OpType.SCAN, true);
+                    s2.setSchema(right.schema);
+                    Join j = new Join(s1, s2, this.conditionList, this.optype);
+                    j.setSchema(schema);
+                    j.setJoinType(JoinType.BLOCKNESTED);
+                    j.setNumBuff(numBuff);
+                    join = new BlockNestedJoin(j);
+                    join.open();
+                    outbatch = join.next();
+                    if (outbatch == null) {
+                        join.close();
+                        join = null;
+                    } else {
+                        return outbatch;
+                    }
+                } else {
+                    // read right partition
                     try {
-                        inright.close();
+                        rightbatch = (Batch) inright.readObject();
+                    } catch (EOFException e) {
+                        try {
+                            inright.close();
+                        } catch (IOException io) {
+                            System.out.println("HashJoin: Error in reading temporary file");
+                        }
+                        eosr = true;
+                        lcurs = 0;
+                        rcurs = 0;
+                        continue;
+                    } catch (ClassNotFoundException c) {
+                        System.out.println("HashJoin: Error in deserialising temporary file ");
+                        System.exit(1);
                     } catch (IOException io) {
                         System.out.println("HashJoin: Error in reading temporary file");
+                        System.exit(1);
                     }
-                    eosr = true;
-                    lcurs = 0;
-                    rcurs = 0;
-                    continue;
-                } catch (ClassNotFoundException c) {
-                    System.out.println("HashJoin: Error in deserialising temporary file ");
-                    System.exit(1);
-                } catch (IOException io) {
-                    System.out.println("HashJoin: Error in reading temporary file");
-                    System.exit(1);
                 }
             }
 

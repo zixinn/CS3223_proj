@@ -23,6 +23,7 @@ public class Scan extends Operator {
     int batchsize;         // Number of tuples per out batch;
     ObjectInputStream in;  // Input file being scanned
     boolean eos;           // To indicate whether end of stream reached or not
+    boolean ispartition;
 
     /**
      * Constructor - just save filename
@@ -31,6 +32,14 @@ public class Scan extends Operator {
         super(type);
         this.tabname = tabname;
         filename = tabname + ".tbl";
+        this.ispartition = false;
+    }
+
+    public Scan(String filename, int type, boolean ispartition) {
+        super(type);
+        this.tabname = null;
+        this.filename = filename;
+        this.ispartition = ispartition;
     }
 
     public String getTabName() {
@@ -58,31 +67,52 @@ public class Scan extends Operator {
      * Next operator - get a tuple from the file
      **/
     public Batch next() {
-        /** The file reached its end and no more to read **/
-        if (eos) {
-            close();
-            return null;
-        }
-        Batch tuples = new Batch(batchsize);
-        while (!tuples.isFull()) {
+        if (ispartition) {
+            if (eos) {
+                close();
+                return null;
+            }
+            Batch batch = new Batch(batchsize);
             try {
-                Tuple data = (Tuple) in.readObject();
-                tuples.add(data);
-            } catch (ClassNotFoundException cnf) {
+                batch = (Batch) in.readObject();
+            } catch (EOFException e) {
+                eos = true;
+                return batch;
+            } catch (ClassNotFoundException c) {
                 System.err.println("Scan:Class not found for reading file  " + filename);
                 System.exit(1);
-            } catch (EOFException EOF) {
-                /** At this point incomplete page is sent and at next call it considered
-                 ** as end of file
-                 **/
-                eos = true;
-                return tuples;
-            } catch (IOException e) {
+            } catch (IOException io) {
                 System.err.println("Scan:Error reading " + filename);
                 System.exit(1);
             }
+            return batch;
+        } else {
+            /** The file reached its end and no more to read **/
+            if (eos) {
+                close();
+                return null;
+            }
+            Batch tuples = new Batch(batchsize);
+            while (!tuples.isFull()) {
+                try {
+                    Tuple data = (Tuple) in.readObject();
+                    tuples.add(data);
+                } catch (ClassNotFoundException cnf) {
+                    System.err.println("Scan:Class not found for reading file  " + filename);
+                    System.exit(1);
+                } catch (EOFException EOF) {
+                    /** At this point incomplete page is sent and at next call it considered
+                     ** as end of file
+                     **/
+                    eos = true;
+                    return tuples;
+                } catch (IOException e) {
+                    System.err.println("Scan:Error reading " + filename);
+                    System.exit(1);
+                }
+            }
+            return tuples;
         }
-        return tuples;
     }
 
     /**
