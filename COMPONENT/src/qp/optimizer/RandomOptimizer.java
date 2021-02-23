@@ -55,6 +55,18 @@ public class RandomOptimizer {
                     nj.setRight(right);
                     nj.setNumBuff(numbuff);
                     return nj;
+                case JoinType.BLOCKNESTED:
+                    BlockNestedJoin bnj = new BlockNestedJoin((Join) node);
+                    bnj.setLeft(left);
+                    bnj.setRight(right);
+                    bnj.setNumBuff(numbuff);
+                    return bnj;
+                case JoinType.HASHJOIN:
+                    HashJoin hj = new HashJoin((Join) node);
+                    hj.setLeft(left);
+                    hj.setRight(right);
+                    hj.setNumBuff(numbuff);
+                    return hj;
                 default:
                     return node;
             }
@@ -68,10 +80,16 @@ public class RandomOptimizer {
             return node;
         } else if (node.getOpType() == OpType.DISTINCT) {
             Distinct distinct = (Distinct) node;
-            int numbuff = BufferManager.getBuffersPerJoin();
+            int numbuff = BufferManager.getBuffers();
             distinct.setNumBuff(numbuff);
             Operator base = makeExecPlan((distinct.getBase()));
             distinct.setBase(base);
+            return node;
+        } else if (node.getOpType() == OpType.SORT) {
+            Operator base = makeExecPlan(((OrderBy) node).getBase());
+            int numBuff = BufferManager.getBuffers();
+            ((OrderBy)node).setNumBuff(numBuff);
+            ((OrderBy)node).setBase(base);
             return node;
         } else {
             return node;
@@ -369,6 +387,8 @@ public class RandomOptimizer {
             return findNodeAt(((Select) node).getBase(), joinNum);
         } else if (node.getOpType() == OpType.PROJECT) {
             return findNodeAt(((Project) node).getBase(), joinNum);
+        } else if (node.getOpType() == OpType.SORT) {
+            return findNodeAt(((OrderBy)node).getBase(), joinNum);
         } else {
             return null;
         }

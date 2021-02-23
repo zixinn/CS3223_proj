@@ -36,7 +36,7 @@ action code {:
 terminal TokenValue ID;
 terminal COMMA,LEFTBRACKET,RIGHTBRACKET,DOT,STAR;
 terminal LESSTHAN,GREATERTHAN,LTOE,GTOE,EQUAL,NOTEQUAL;
-terminal SELECT,FROM,WHERE,GROUPBY,ORDERBY,MAX,MIN,SUM,COUNT,AVG,DISTINCT;
+terminal SELECT,FROM,WHERE,GROUPBY,ORDERBY,MAX,MIN,SUM,COUNT,AVG,DISTINCT,ASC,DESC;
 terminal TokenValue STRINGLIT;
 
 /* Non terminals */
@@ -48,6 +48,7 @@ nonterminal ArrayList tablelist;
 nonterminal ArrayList conditionlist;
 nonterminal Condition condition;
 nonterminal Condition op;
+nonterminal boolean order;
 
 /* The grammar */
 finalquery ::= sqlquery:s
@@ -61,16 +62,18 @@ finalquery ::= sqlquery:s
 			parser.query = s;
             RESULT = s;
         :}
-        |  sqlquery:s ORDERBY attlist:a
+        |  sqlquery:s ORDERBY attlist:a order:o
         {:
             s.setOrderByList(a);
+			s.setAscending(o);
             parser.query = s;
             RESULT = s;
         :}
-        | sqlquery:s GROUPBY attlist:a ORDERBY attlist:b
+        | sqlquery:s GROUPBY attlist:a ORDERBY attlist:b order:o
         {:
             s.setGroupByList(a);
             s.setOrderByList(b);
+			s.setAscending(o);
             parser.query = s;
             RESULT = s;
         :}
@@ -251,3 +254,14 @@ op ::= LESSTHAN
 			RESULT = new Condition(Condition.EQUAL);
 		:}
 		;	
+
+order ::= ASC
+		{: 
+			RESULT = true; 
+		:}
+		|
+		DESC
+		{: 
+			RESULT = false; 
+		:}
+		;

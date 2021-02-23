@@ -78,6 +78,8 @@ public class PlanCost {
             return getStatistics((Scan) node);
         } else if (node.getOpType() == OpType.DISTINCT) {
             return getStatistics((Distinct) node);
+        } else if (node.getOpType() == OpType.SORT) {
+            return getStatistics((OrderBy) node);
         }
         System.out.println("operator is not supported");
         isFeasible = false;
@@ -145,6 +147,12 @@ public class PlanCost {
             case JoinType.NESTEDJOIN:
                 joincost = leftpages * rightpages;
                 break;
+            case JoinType.BLOCKNESTED:
+                joincost = leftpages + (int) Math.ceil(leftpages / (numbuff - 2)) * rightpages;
+                break;
+            case JoinType.HASHJOIN:
+                joincost = 3 * (leftpages + rightpages);
+                break;
             default:
                 System.out.println("join type is not supported");
                 return 0;
@@ -165,6 +173,16 @@ public class PlanCost {
         long numbuff = BufferManager.numBuffer;
         // Multi-way merge sort cost. Cost may be lesser depending on the number of duplicates
         return 2 * numpages * (1 + (long) Math.ceil(Math.log(Math.ceil((double) numpages / numbuff)) / Math.log(numbuff - 1)));
+    }
+
+    
+    protected long getStatistics(OrderBy node) {
+        long numbuff = BufferManager.getBuffers();
+        long base = calculateCost(node.getBase());
+        long tupleSize = node.getSchema().getTupleSize();
+        long pages = (long) Math.ceil(((double) base) / (double) (Math.max(1, Batch.getPageSize() / tupleSize)));
+        long sort = 2 * pages * (1 + (long) Math.ceil(Math.log(Math.ceil((double) pages / numbuff)) / Math.log(numbuff - 1)));
+        return sort + base;
     }
 
     /**
