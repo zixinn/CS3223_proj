@@ -7,6 +7,7 @@ package qp.operators;
 import qp.utils.Attribute;
 import qp.utils.Batch;
 import qp.utils.Condition;
+import qp.utils.RandNumb;
 import qp.utils.Tuple;
 
 import java.io.*;
@@ -38,11 +39,18 @@ public class HashJoin extends Join{
     boolean eosr;                   // Whether end of stream (right table) is reached
     boolean done;                   // Whether the hash join is completed
 
+    int a1, b1, a2, b2;             // Constants for hash functions
+
     public HashJoin(Join jn) {
         super(jn.getLeft(), jn.getRight(), jn.getConditionList(), jn.getOpType());
         schema = jn.getSchema();
         jointype = jn.getJoinType();
         numBuff = jn.getNumBuff();
+
+        a1 = RandNumb.randInt(0, numBuff);
+        b1 = RandNumb.randInt(0, numBuff);
+        a2 = RandNumb.randInt(0, numBuff);
+        b2 = RandNumb.randInt(0, numBuff);
     }
 
     /**
@@ -102,7 +110,7 @@ public class HashJoin extends Join{
                     for (int i = 0; i < leftbatch.size(); i++) {
                         Tuple tuple = leftbatch.get(i);
                         int key = tuple.dataAt(leftindex.get(0)).hashCode();
-                        int partitionnum = key % (numBuff - 1);
+                        int partitionnum = (a1 * key + b1) % (numBuff - 1);
                         partitions.get(partitionnum).add(tuple);
                         if (partitions.get(partitionnum).isFull()) {
                             leftout.get(partitionnum).writeObject(partitions.get(partitionnum));
@@ -145,7 +153,7 @@ public class HashJoin extends Join{
                     for (int i = 0; i < rightbatch.size(); i++) {
                         Tuple tuple = rightbatch.get(i);
                         int key = tuple.dataAt(rightindex.get(0)).hashCode();
-                        int partitionnum = key % (numBuff - 1);
+                        int partitionnum = (a1 * key + b1) % (numBuff - 1);
                         partitions.get(partitionnum).add(tuple);
                         if (partitions.get(partitionnum).isFull()) {
                             rightout.get(partitionnum).writeObject(partitions.get(partitionnum));
@@ -278,7 +286,7 @@ public class HashJoin extends Join{
                         for (int i = 0; i < leftbatch.size(); i++) {
                             Tuple tuple = leftbatch.get(i);
                             int key = tuple.dataAt(leftindex.get(0)).hashCode();
-                            int partitionnum = key % (numBuff - 2);
+                            int partitionnum = (a2 * key + b2) % (numBuff - 2);
                             hashtable.get(partitionnum).add(tuple);
                             if (hashtable.get(partitionnum).size() >= leftbatchsize) { // partition cannot fit into memory
                                 lcurs = 0;
@@ -339,7 +347,7 @@ public class HashJoin extends Join{
                     for (int j = rcurs; j < rightbatch.size(); j++) {
                         Tuple righttuple = rightbatch.get(j);
                         int key = righttuple.dataAt(rightindex.get(0)).hashCode();
-                        int partitionnum = key % (numBuff - 2);
+                        int partitionnum = (a2 * key + b2) % (numBuff - 2);
                         for (int i = lcurs; i < hashtable.get(partitionnum).size(); i++) {
                             Tuple lefttuple = hashtable.get(partitionnum).get(i);
                             if (lefttuple.checkJoin(righttuple, leftindex, rightindex)) {
