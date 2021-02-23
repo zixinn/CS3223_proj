@@ -185,14 +185,12 @@ public class HashJoin extends Join{
         }
 
         if (numBuff < Math.sqrt(leftnumpages)) {
-            System.out.println("!!!"); //?????
             if (pcurs == -1) {
                 pcurs++;
             }
 
             // recursively partition each partition
             while (pcurs < numBuff - 1) {
-                System.out.println(pcurs); //?????
                 if (hashjoin == null) {
                     lfname = "HJLtemp-" + String.valueOf(pcurs) + this.hashCode();
                     rfname = "HJRtemp-" + String.valueOf(pcurs) + this.hashCode();
