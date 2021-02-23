@@ -163,8 +163,16 @@ public class PlanCost {
     }
 
     protected long getStatistics(Distinct node) {
-        // TODO calculate cost for distinct
-        return 1;
+        Schema schema = node.getSchema();
+
+        /** Number of tuples per page**/
+        long tuplesize = schema.getTupleSize();
+        long pagesize = Math.max(Batch.getPageSize() / tuplesize, 1);
+        long numtuples = calculateCost(node.getBase());
+        long numpages = (long) Math.ceil((double) numtuples / (double) pagesize);
+        long numbuff = BufferManager.numBuffer;
+        // Multi-way merge sort cost. Cost may be lesser depending on the number of duplicates
+        return 2 * numpages * (1 + (long) Math.ceil(Math.log(Math.ceil((double) numpages / numbuff)) / Math.log(numbuff - 1)));
     }
 
     
