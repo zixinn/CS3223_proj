@@ -17,6 +17,7 @@ public class HashJoin extends Join{
     int leftbatchsize;              // Number of tuples per left batch
     int rightbatchsize;             // Number of tuples per right batch
     int batchsize;                  // Number of tuples per out batch
+    int leftnumpages;               // Number of pages for left table
     ArrayList<Integer> leftindex;   // Indices of the join attributes in left table
     ArrayList<Integer> rightindex;  // Indices of the join attributes in right table
     String lfname;                  // The file name where the left table is materialized
@@ -27,7 +28,8 @@ public class HashJoin extends Join{
     ObjectInputStream inleft;       // File pointer to the left hand materialized file
     ObjectInputStream inright;      // File pointer to the right hand materialized file
     ArrayList<Batch> hashtable;     // Hash table for joining phase
-    Join join;
+    Join hashjoin;                  // Hash join for recursive hash join
+    Join blocknestedjoin;           // Block nested join for partitions that cannot fit into memory
 
     int lcurs;                      // Cursor for left side buffer
     int rcurs;                      // Cursor for right side buffer
@@ -67,7 +69,9 @@ public class HashJoin extends Join{
             rightindex.add(right.getSchema().indexOf(rightattr));
         }
 
-        join = null;
+        leftnumpages = 0;
+        hashjoin = null;
+        blocknestedjoin = null;
 
         /** initialize the cursors of input buffers **/
         lcurs = 0; 
@@ -94,6 +98,7 @@ public class HashJoin extends Join{
                     leftout.add(new ObjectOutputStream(new FileOutputStream(tfname)));
                 }
                 while ((leftbatch = left.next()) != null) {
+                    leftnumpages++;
                     for (int i = 0; i < leftbatch.size(); i++) {
                         Tuple tuple = leftbatch.get(i);
                         int key = tuple.dataAt(leftindex.get(0)).hashCode();
@@ -170,103 +175,192 @@ public class HashJoin extends Join{
         if (done) {
             return null;
         }
-        outbatch = new Batch(batchsize);
-        while (!outbatch.isFull()) {
-            if (lcurs == 0 && rcurs == 0 && eosr == true) {
-                if (join != null) {
-                    outbatch = join.next();
-                    if (outbatch == null) {
-                        join.close();
-                        join = null;
-                    } else {
-                        return outbatch;
-                    }
-                }
 
-                if (pcurs == numBuff - 2 && eosl == true) {
-                    done = true;
-                    return outbatch;
-                }
+        if (numBuff < Math.sqrt(leftnumpages)) {
+            System.out.println("!!!"); //?????
+            if (pcurs == -1) {
+                pcurs++;
+            }
 
-                if (eosl == true) {
-                    pcurs++;
+            // recursively partition each partition
+            while (pcurs < numBuff - 1) {
+                System.out.println(pcurs); //?????
+                if (hashjoin == null) {
                     lfname = "HJLtemp-" + String.valueOf(pcurs) + this.hashCode();
                     rfname = "HJRtemp-" + String.valueOf(pcurs) + this.hashCode();
-                }
-
-                try {
-                    inleft = new ObjectInputStream(new FileInputStream(lfname));
-                    inright = new ObjectInputStream(new FileInputStream(rfname));
-                } catch (IOException e) {
-                    System.err.println("HashJoin:error in reading the file");
-                    System.exit(1);
-                }
-
-                hashtable = new ArrayList<>(numBuff - 2);
-                for (int i = 0; i < numBuff - 2; i++) {
-                    hashtable.add(new Batch(leftbatchsize));
-                }
-
-                eosl = false;
-                eosr = false;
-                boolean full = false;
-
-                // read left partition
-                while (eosl == false && full == false) {
-                    try {
-                        leftbatch = (Batch) inleft.readObject();
-                    } catch (EOFException e) {
-                        try {
-                            inleft.close();
-                        } catch (IOException io) {
-                            System.out.println("HashJoin: Error in reading temporary file");
-                        }
-                        eosl = true;
-                        break;
-                    } catch (ClassNotFoundException c) {
-                        System.out.println("HashJoin: Error in deserialising temporary file ");
-                        System.exit(1);
-                    } catch (IOException io) {
-                        System.out.println("HashJoin: Error in reading temporary file");
-                        System.exit(1);
-                    }
-
-                    for (int i = 0; i < leftbatch.size(); i++) {
-                        Tuple tuple = leftbatch.get(i);
-                        int key = tuple.dataAt(leftindex.get(0)).hashCode();
-                        int partitionnum = key % (numBuff - 2);
-                        hashtable.get(partitionnum).add(tuple);
-                        if (hashtable.get(partitionnum).size() >= leftbatchsize) { // partition cannot fit into memory
-                            lcurs = 0;
-                            rcurs = 0;
-                            eosl = true;
-                            eosr = true;
-                            full = true;
-                            break;
-                        }
-                    }
-                }
-
-                if (full == true) {
                     Scan s1 = new Scan(lfname, OpType.SCAN, true);
                     s1.setSchema(left.schema);
                     Scan s2 = new Scan(rfname, OpType.SCAN, true);
                     s2.setSchema(right.schema);
                     Join j = new Join(s1, s2, this.conditionList, this.optype);
                     j.setSchema(schema);
-                    j.setJoinType(JoinType.BLOCKNESTED);
+                    j.setJoinType(JoinType.HASHJOIN);
                     j.setNumBuff(numBuff);
-                    join = new BlockNestedJoin(j);
-                    join.open();
-                    outbatch = join.next();
-                    if (outbatch == null) {
-                        join.close();
-                        join = null;
-                    } else {
+                    hashjoin = new HashJoin(j);
+                    hashjoin.open();
+                }
+
+                outbatch = hashjoin.next();
+                if (outbatch == null) {
+                    hashjoin.close();
+                    hashjoin = null;
+                    pcurs++;
+                } else {
+                    return outbatch;
+                }
+            }
+
+            return null;
+
+        } else {
+            outbatch = new Batch(batchsize);
+            while (!outbatch.isFull()) {
+                if (lcurs == 0 && rcurs == 0 && eosr == true) {
+                    if (blocknestedjoin != null) {
+                        outbatch = blocknestedjoin.next();
+                        if (outbatch == null) {
+                            blocknestedjoin.close();
+                            blocknestedjoin = null;
+                            outbatch = new Batch(batchsize);
+                        } else {
+                            return outbatch;
+                        }
+                    }
+
+                    if (pcurs == numBuff - 2 && eosl == true) {
+                        done = true;
                         return outbatch;
                     }
-                } else {
-                    // read right partition
+
+                    if (eosl == true) {
+                        pcurs++;
+                        lfname = "HJLtemp-" + String.valueOf(pcurs) + this.hashCode();
+                        rfname = "HJRtemp-" + String.valueOf(pcurs) + this.hashCode();
+                    }
+
+                    try {
+                        inleft = new ObjectInputStream(new FileInputStream(lfname));
+                        inright = new ObjectInputStream(new FileInputStream(rfname));
+                    } catch (IOException e) {
+                        System.err.println("HashJoin:error in reading the file");
+                        System.exit(1);
+                    }
+
+                    hashtable = new ArrayList<>(numBuff - 2);
+                    for (int i = 0; i < numBuff - 2; i++) {
+                        hashtable.add(new Batch(leftbatchsize));
+                    }
+
+                    eosl = false;
+                    eosr = false;
+                    boolean full = false;
+
+                    // read left partition
+                    while (eosl == false && full == false) {
+                        try {
+                            leftbatch = (Batch) inleft.readObject();
+                        } catch (EOFException e) {
+                            try {
+                                inleft.close();
+                            } catch (IOException io) {
+                                System.out.println("HashJoin: Error in reading temporary file");
+                            }
+                            eosl = true;
+                            break;
+                        } catch (ClassNotFoundException c) {
+                            System.out.println("HashJoin: Error in deserialising temporary file ");
+                            System.exit(1);
+                        } catch (IOException io) {
+                            System.out.println("HashJoin: Error in reading temporary file");
+                            System.exit(1);
+                        }
+
+                        for (int i = 0; i < leftbatch.size(); i++) {
+                            Tuple tuple = leftbatch.get(i);
+                            int key = tuple.dataAt(leftindex.get(0)).hashCode();
+                            int partitionnum = key % (numBuff - 2);
+                            hashtable.get(partitionnum).add(tuple);
+                            if (hashtable.get(partitionnum).size() >= leftbatchsize) { // partition cannot fit into memory
+                                lcurs = 0;
+                                rcurs = 0;
+                                eosl = true;
+                                eosr = true;
+                                full = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (full == true) {
+                        // use block nested join if partition cannot fit in memory
+                        Scan s1 = new Scan(lfname, OpType.SCAN, true);
+                        s1.setSchema(left.schema);
+                        Scan s2 = new Scan(rfname, OpType.SCAN, true);
+                        s2.setSchema(right.schema);
+                        Join j = new Join(s1, s2, this.conditionList, this.optype);
+                        j.setSchema(schema);
+                        j.setJoinType(JoinType.BLOCKNESTED);
+                        j.setNumBuff(numBuff);
+                        blocknestedjoin = new BlockNestedJoin(j);
+                        blocknestedjoin.open();
+                        outbatch = blocknestedjoin.next();
+                        if (outbatch == null) {
+                            blocknestedjoin.close();
+                            blocknestedjoin = null;
+                            outbatch = new Batch(batchsize);
+                        } else {
+                            return outbatch;
+                        }
+                    } else {
+                        // read right partition
+                        try {
+                            rightbatch = (Batch) inright.readObject();
+                        } catch (EOFException e) {
+                            try {
+                                inright.close();
+                            } catch (IOException io) {
+                                System.out.println("HashJoin: Error in reading temporary file");
+                            }
+                            eosr = true;
+                            lcurs = 0;
+                            rcurs = 0;
+                            continue;
+                        } catch (ClassNotFoundException c) {
+                            System.out.println("HashJoin: Error in deserialising temporary file ");
+                            System.exit(1);
+                        } catch (IOException io) {
+                            System.out.println("HashJoin: Error in reading temporary file");
+                            System.exit(1);
+                        }
+                    }
+                }
+
+                while (eosr == false) {
+                    for (int j = rcurs; j < rightbatch.size(); j++) {
+                        Tuple righttuple = rightbatch.get(j);
+                        int key = righttuple.dataAt(rightindex.get(0)).hashCode();
+                        int partitionnum = key % (numBuff - 2);
+                        for (int i = lcurs; i < hashtable.get(partitionnum).size(); i++) {
+                            Tuple lefttuple = hashtable.get(partitionnum).get(i);
+                            if (lefttuple.checkJoin(righttuple, leftindex, rightindex)) {
+                                Tuple outtuple = lefttuple.joinWith(righttuple);
+                                outbatch.add(outtuple);
+                                if (outbatch.isFull()) {
+                                    if (i == hashtable.get(partitionnum).size() - 1 && j != rightbatch.size() - 1) {
+                                        lcurs = 0;
+                                        rcurs = j + 1;
+                                    } else {
+                                        lcurs = i + 1;
+                                        rcurs = j;
+                                    }
+                                    return outbatch;
+                                }
+                            }
+                        }
+                        lcurs = 0;
+                    }
+                    rcurs = 0;
+
                     try {
                         rightbatch = (Batch) inright.readObject();
                     } catch (EOFException e) {
@@ -276,9 +370,6 @@ public class HashJoin extends Join{
                             System.out.println("HashJoin: Error in reading temporary file");
                         }
                         eosr = true;
-                        lcurs = 0;
-                        rcurs = 0;
-                        continue;
                     } catch (ClassNotFoundException c) {
                         System.out.println("HashJoin: Error in deserialising temporary file ");
                         System.exit(1);
@@ -289,52 +380,8 @@ public class HashJoin extends Join{
                 }
             }
 
-            while (eosr == false) {
-                for (int j = rcurs; j < rightbatch.size(); j++) {
-                    Tuple righttuple = rightbatch.get(j);
-                    int key = righttuple.dataAt(rightindex.get(0)).hashCode();
-                    int partitionnum = key % (numBuff - 2);
-                    for (int i = lcurs; i < hashtable.get(partitionnum).size(); i++) {
-                        Tuple lefttuple = hashtable.get(partitionnum).get(i);
-                        if (lefttuple.checkJoin(righttuple, leftindex, rightindex)) {
-                            Tuple outtuple = lefttuple.joinWith(righttuple);
-                            outbatch.add(outtuple);
-                            if (outbatch.isFull()) {
-                                if (i == hashtable.get(partitionnum).size() - 1 && j != rightbatch.size() - 1) {
-                                    lcurs = 0;
-                                    rcurs = j + 1;
-                                } else {
-                                    lcurs = i + 1;
-                                    rcurs = j;
-                                }
-                                return outbatch;
-                            }
-                        }
-                    }
-                    lcurs = 0;
-                }
-                rcurs = 0;
-
-                try {
-                    rightbatch = (Batch) inright.readObject();
-                } catch (EOFException e) {
-                    try {
-                        inright.close();
-                    } catch (IOException io) {
-                        System.out.println("HashJoin: Error in reading temporary file");
-                    }
-                    eosr = true;
-                } catch (ClassNotFoundException c) {
-                    System.out.println("HashJoin: Error in deserialising temporary file ");
-                    System.exit(1);
-                } catch (IOException io) {
-                    System.out.println("HashJoin: Error in reading temporary file");
-                    System.exit(1);
-                }
-            }
+            return outbatch;
         }
-
-        return outbatch;
     }
 
     /**
