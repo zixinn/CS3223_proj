@@ -1,233 +1,293 @@
+/**
+ * Sort algorithm
+ **/
+
 package qp.operators;
 
-import qp.utils.*;
+import qp.utils.Attribute;
+import qp.utils.Batch;
+import qp.utils.Schema;
+import qp.utils.Tuple;
 
 import java.io.*;
 import java.util.*;
 
 public class Sort extends Operator {
-        
+
     Operator base;                  // Base Operator
-    String fname;                   // The file name where the sorted run is materialized
     int batchsize;                  // Number of tuples per out batch
+    int numbuff;                    // Number of buffers available
+    int totalnumrun;                // Number of sorted runs
+    int totalnumpass;               // Number of passes
+
+    ArrayList<Attribute> attrset;   // Set of attributes to project
     ArrayList<Integer> attrIndex;   // Indexes of atttributes to sort
-    int numBuff;                    // Number of buffers available
-    Batch outbatch;                 // Buffer for output stream
-    ArrayList<Tuple> tuples;        // The tuples in-memory
-    ObjectInputStream in;           // File pointer to the sorted runs file
-    boolean isAscending;            // Sort ascending or descending
-    boolean eos_unsorted;           // Whether end of stream (unsorted result) is reached
+    ObjectInputStream insorted;     // Input stream for sorted results
 
-    int numRun;                     // Count number of sorted runs generated
-    ArrayList<String> tempFiles;    // Pages that are stored on the disk
-    ArrayList<TupleReader> readers; // Store readers for merging
-    ArrayList<Pair> pairs;          // Store pairs of tuples and index to its reader
+    boolean eos = false;            // Whether the end of stream is reached
+    boolean isAscending;            // Whether to sort ascending or descending
 
-    public Sort(Operator base, ArrayList<Integer> attrIndex, int numBuff, boolean isAscending) {
+    public Sort(Operator base, ArrayList<Attribute> as, int numbuff, boolean isAscending) {
         super(OpType.SORT);
         this.base = base;
         this.schema = base.schema;
-        this.numBuff = numBuff;
-        this.attrIndex = attrIndex;
+        this.numbuff = numbuff;
+        this.attrset = as;
         this.isAscending = isAscending;
-        this.tempFiles = new ArrayList<>();
-        this.readers = new ArrayList<>();        
-        
+    }
+
+    private String getSortedRunfname(int numpass, int numrun) {
+        return "SortedRun-" + numpass + "-" + numrun + "-" + this.hashCode();
+    }
+
+    private int compareTuples(Tuple t1, Tuple t2) {
+        for (int index : attrIndex) {
+            int res = Tuple.compareTuples(t1, t2, index, index);
+            if (res != 0) {
+                return isAscending? res : res * -1;
+            }
+        }
+        return 0;
     }
 
     private void generateSortedRuns() {
-        while (!eos_unsorted) {
-
-            for (int i = 0; i < numBuff; i++) {
-                Batch batch = base.next();
-                if (batch == null) {
-                    eos_unsorted = true;
-                    break;
-                }
+        Batch batch = base.next();
+        while (batch != null) {
+            PriorityQueue<Tuple> tuples = new PriorityQueue<>(batchsize, this::compareTuples);
+            for (int i = 0; i < numbuff && batch != null; i++) {
                 for (int j = 0; j < batch.size(); j++) {
                     tuples.add(batch.get(j));
                 }
+                batch = base.next();
             }
 
-            if (tuples.isEmpty()) {
-                break;
-            }
-
-            // In-mem sorting          
-            Collections.sort(tuples, (t1, t2) -> isAscending? Tuple.compareTuples(t1, t2, attrIndex, attrIndex) : Tuple.compareTuples(t1, t2, attrIndex, attrIndex) * -1);
-
-            numRun++;
-            fname = "SortedRun-" + String.valueOf(numRun);
-
-            TupleWriter writer = new TupleWriter(fname, batchsize);
-            if (!writer.open()) {
-                System.out.println("SortedRun: Error writing sorted runs to file " + fname);
+            String fname = "SortedRun-" + 0 + "-" + totalnumrun + "-" + this.hashCode();
+            try {
+                ObjectOutputStream out = new ObjectOutputStream(new FileOutputStream(fname));
+                Batch outbatch = new Batch(batchsize);
+                while (!tuples.isEmpty()) {
+                    Tuple tuple = tuples.poll();
+                    outbatch.add(tuple);
+                    if (outbatch.isFull()) {
+                        out.writeObject(outbatch);
+                        outbatch = new Batch(batchsize);
+                    }
+                }
+                out.writeObject(outbatch);
+                out.close();
+            } catch (IOException e) {
+                System.err.println("Sort: error writing to temporary file");
                 System.exit(1);
             }
-            while (!tuples.isEmpty()) {
-                writer.next(tuples.remove(0));
+            totalnumrun++;
+        }
+    }
+
+    private int mergeSortedRuns(int numpass, int numrun) {
+        if (numrun == 1) {
+            totalnumpass = numpass;
+            try {
+                String fname = "SortedRun-" + (numpass - 1) + "-" + (numrun - 1) + "-" + this.hashCode();
+                insorted = new ObjectInputStream(new FileInputStream(fname));
+            } catch (IOException e) {
+                System.err.println("Sort: error in reading temporary file");
             }
-            writer.close();
-     
-            
-            tempFiles.add(fname);
+            return numrun;
         }
 
-        base.close();  
-        
+        int numoutrun = 0;
+        int start = 0;
+        while (start < numrun) {
+            int end = start + numbuff - 1 < numrun ? start + numbuff - 1 : numrun;
+            mergeSortedRunsRange(start, end, numpass, numoutrun);
+            numoutrun++;
+            start += numbuff - 1;
+        }
+        return mergeSortedRuns(numpass + 1, numoutrun);
     }
-    
-    private void merge() {
-        ArrayList<String> temp_next_sortedrun = new ArrayList<>();
-        int i = 0;
-        while (i < tempFiles.size()) {
-            while (i < tempFiles.size() && i % (numBuff - 1) != 0) {
-                //Add pages into buffer until input buffer full
-                TupleReader reader = new TupleReader(tempFiles.get(i), batchsize);
-                if (!reader.open()) {
-                    System.out.println(tempFiles.get(i) + ": Unable to open file");
-                    System.exit(1);
-                }
-                readers.add(reader);
-                i++;
-            }
-            numRun++;
-            fname = "SortedRun-" + String.valueOf(numRun);
-            
-            pairs.clear();
-            //Populate tuples with first tuple from each buffer
-            for (int j = 0; j < readers.size(); j++) {
-                Tuple tuple = readers.get(j).next();
-                if (tuple == null) {
-                    System.out.println("tuple is empty");
-                    System.exit(1);
-                }
-                pairs.add(new Pair(tuple, j));
-            }
 
-            Collections.sort(pairs, (p1, p2) -> isAscending? Tuple.compareTuples(p1.tuple, p2.tuple, attrIndex, attrIndex) : Tuple.compareTuples(p1.tuple, p2.tuple, attrIndex, attrIndex) * -1);
+    private void mergeSortedRunsRange(int start, int end, int numpass, int numrun) {
+        ObjectInputStream[] instream = new ObjectInputStream[end - start];
+        PriorityQueue<TupleWithId> pq = new PriorityQueue<>(batchsize, (t1, t2) -> compareTuples(t1.tuple, t2.tuple));
+        int[] curs = new int[end - start];
+        boolean[] done = new boolean[end - start];
 
-     
-            TupleWriter writer = new TupleWriter(fname, batchsize);
-            if (!writer.open()) {
-                System.out.println("SortedRun: Error writing sorted runs to file " + fname);
+        String ofname = "SortedRun-" + numpass + "-" + numrun + "-" + this.hashCode();
+        ObjectOutputStream out = null;
+        try {
+            out = new ObjectOutputStream(new FileOutputStream(ofname));
+        } catch (IOException io) {
+            System.err.println("Sort: error writing to temporary file");
+            System.exit(1);
+        }
+
+        // read sorted run into buffers
+        for (int i = 0; i < end - start; i++) {
+            String fname = "SortedRun-" + (numpass - 1) + "-" + (start + i) + "-" + this.hashCode();
+            try {
+                instream[i] = new ObjectInputStream(new FileInputStream(fname));
+            } catch (IOException io) {
+                System.err.println("Sort: error in reading temporary file");
                 System.exit(1);
             }
-            //Merge and place each element into the output buffer
-            while (!pairs.isEmpty()) {
-                Pair pair = pairs.remove(0);
-                writer.next(pair.tuple);
-                Tuple nextTuple = readers.get(pair.index).next();
-                if (nextTuple != null) {
-                    pairs.add(new Pair(nextTuple, pair.index));
-                    Collections.sort(pairs, (p1, p2) -> isAscending? Tuple.compareTuples(p1.tuple, p2.tuple, attrIndex, attrIndex) : Tuple.compareTuples(p1.tuple, p2.tuple, attrIndex, attrIndex) * -1);
+            
+            Batch batch = new Batch(batchsize);
+            try {
+                batch = (Batch) instream[i].readObject();
+            } catch (EOFException e) {
+                try {
+                    instream[i].close();
+                    String dfname = "SortedRun-" + (numpass - 1) + "-" + (start + i) + "-" + this.hashCode();
+                    File f = new File(dfname);
+                    f.delete();
+                } catch (IOException io) {
+                    System.err.println("Sort: Error in reading temporary file");
+                }
+            } catch (ClassNotFoundException c) {
+                System.err.println("Sort: Error in deserialising temporary file ");
+                System.exit(1);
+            } catch (IOException io) {
+                System.err.println("Sort: Error in reading temporary file");
+                System.exit(1);
+            }
+            if (batch != null && !batch.isEmpty()) {
+                for (Tuple t : batch.getAllTuples()) {
+                    pq.add(new TupleWithId(t, i, curs[i]));
+                    curs[i]++;
                 }
             }
-            writer.close();
-
-
-            temp_next_sortedrun.add(fname);
-            readers.clear();
-        }
-        
-        //delete the temp files
-        for (int k = 0; k < tempFiles.size(); k++) {
-            File f = new File(tempFiles.get(k));
-            f.delete();
         }
 
-        tempFiles = temp_next_sortedrun;
+        Batch outbatch = new Batch(batchsize);
+        while (!pq.isEmpty()) {
+            TupleWithId tuple = pq.poll();
+            outbatch.add(tuple.tuple);
+            if (outbatch.isFull()) {
+                try {
+                    out.writeObject(outbatch);
+                } catch (IOException io) {
+                    System.err.println("Sort: error writing to temporary file");
+                    System.exit(1);
+                }
+                outbatch = new Batch(batchsize);
+            }
 
+            int runid = tuple.runid;
+            int nexttupleid = tuple.tupleid + 1;
+
+            // read next page for run into buffer
+            if (!done[runid] && nexttupleid % batchsize == 0) {
+                Batch batch = new Batch(batchsize);
+                try {
+                    batch = (Batch) instream[runid].readObject();
+                } catch (EOFException e) {
+                    try {
+                        instream[runid].close();
+                    } catch (IOException io) {
+                        System.err.println("Sort: Error in reading temporary file");
+                    }
+                    done[runid] = true;
+                    String dfname = "SortedRun-" + (numpass - 1) + "-" + (start + runid) + "-" + this.hashCode();
+                    File f = new File(dfname);
+                    f.delete();
+                } catch (ClassNotFoundException c) {
+                    System.err.println("Sort: Error in deserialising temporary file ");
+                    System.exit(1);
+                } catch (IOException io) {
+                    System.err.println("Sort: Error in reading temporary file");
+                    System.exit(1);
+                }
+                if (batch != null && !batch.isEmpty()) {
+                    for (Tuple t : batch.getAllTuples()) {
+                        pq.add(new TupleWithId(t, runid, curs[runid]));
+                        curs[runid]++;
+                    }
+                }
+            }
+        }
+
+        if (!outbatch.isEmpty()) {
+            try {
+                out.writeObject(outbatch);
+            } catch (IOException io) {
+                System.err.println("Sort: error writing to temporary file");
+                System.exit(1);
+            }
+        }
+
+        try {
+            out.close();
+        } catch (IOException io) {
+            System.out.println("NestedJoin: Error in reading temporary file");
+        }
     }
-    
+
     public boolean open() {
-        /** set number of tuples per batch **/
         int tuplesize = schema.getTupleSize();
         batchsize = Batch.getPageSize() / tuplesize;
 
         if (!base.open()) return false;
         
-        eos_unsorted = false;
-        tuples = new ArrayList<>();
-        pairs = new ArrayList<>();
+        Schema baseSchema = base.getSchema();
+        attrIndex = new ArrayList<>(attrset.size());
+        for (int i = 0; i < attrset.size(); i++) {
+            Attribute attr = attrset.get(i);
+            int index = baseSchema.indexOf(attr.getBaseAttribute());
+            attrIndex.add(schema.indexOf(attr));
+        }
+
+        totalnumrun = 0;
         generateSortedRuns();
+        mergeSortedRuns(1, totalnumrun);
 
-        while (tempFiles.size() > numBuff - 1) {
-            merge();
-        }
-
-        //Load pages in disk into buffer
-        for (int i = 0; i < tempFiles.size(); i++) {
-            fname = tempFiles.get(i);
-            TupleReader reader = new TupleReader(fname, batchsize);
-            if (!reader.open()) {
-                System.out.println("Unable to open file for: " + fname);
-                System.exit(1);
-                return false;
-            }
-            readers.add(reader);
-        }
-
-        pairs.clear();
-        //Populate tuples with first tuple from each buffer
-        for (int j = 0; j < readers.size(); j++) {
-            Tuple tuple = readers.get(j).next();
-            if (tuple == null) {
-                System.out.println("tuple is empty");
-                System.exit(1);
-                return false;
-            }
-            pairs.add(new Pair(tuple, j));
-        }
-
-        Collections.sort(pairs, (p1, p2) -> isAscending? Tuple.compareTuples(p1.tuple, p2.tuple, attrIndex, attrIndex) : Tuple.compareTuples(p1.tuple, p2.tuple, attrIndex, attrIndex) * -1);
-
+        if (!base.close()) return false;
 
         return true;
     }
 
     public Batch next() {
-        outbatch = new Batch(batchsize);
-        while (!pairs.isEmpty()) {
-            Pair pair = pairs.remove(0);
-            outbatch.add(pair.tuple);
-            Tuple nextTuple = readers.get(pair.index).next();
-            if (nextTuple != null) {
-                pairs.add(new Pair(nextTuple, pair.index));
-                Collections.sort(pairs, (p1, p2) -> isAscending? Tuple.compareTuples(p1.tuple, p2.tuple, attrIndex, attrIndex) : Tuple.compareTuples(p1.tuple, p2.tuple, attrIndex, attrIndex) * -1);
-
-            }
-            if (outbatch.isFull()) {
-                return outbatch;
-            }
-        }
-        if (outbatch.isEmpty()) {
+        if (eos) {
+            close();
             return null;
+        }
+
+        Batch outbatch = new Batch(batchsize);
+        try {
+            outbatch = (Batch) insorted.readObject();
+        } catch (EOFException EOF) {
+            eos = true;
+            try {
+                insorted.close();
+                String dfname = "SortedRun-" + (totalnumpass - 1) + "-" + 0 + "-" + this.hashCode();
+                File f = new File(dfname);
+                f.delete();
+            } catch (IOException io) {
+                System.err.println("Sort: Error in reading temporary file");
+            }
+            return outbatch;
+        } catch (ClassNotFoundException c) {
+            System.err.println("Sort: Error in deserialising temporary file ");
+            System.exit(1);
+        } catch (IOException io) {
+            System.err.println("Sort: Error in reading temporary file");
+            System.exit(1);
         }
         return outbatch;
     }
 
     public boolean close() {
-        for (int i = 0; i < readers.size(); i++) {
-            readers.get(i).close();
-        }
-        //delete the temp files
-        for (int k = 0; k < tempFiles.size(); k++) {
-            File f = new File(tempFiles.get(k));
-            f.delete();
-        }
         return true;
     }
+}
 
-    class Pair {
-        Tuple tuple;
-        int index;
+class TupleWithId {
+    Tuple tuple;
+    int runid;
+    int tupleid;
 
-        Pair(Tuple t, int i) {
-            this.tuple = t;
-            this.index = i;
-        }
+    public TupleWithId(Tuple tuple, int runid, int tupleid) {
+        this.tuple = tuple;
+        this.runid = runid;
+        this.tupleid = tupleid;
     }
-
-
 }

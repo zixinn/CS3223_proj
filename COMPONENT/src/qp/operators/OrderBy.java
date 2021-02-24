@@ -14,7 +14,6 @@ public class OrderBy extends Operator {
     private int batchsize;                  // Number of tuples per out batch
     private ArrayList<Attribute> attrset;   // Set of attributes to project
     private ArrayList<Attribute> compareAttri; //Set of attributes to orderBy
-    private ArrayList<Integer> attrIndex;   // Indexes of atttributes to sort
     private int numBuff;                    // Number of buffers available
     private boolean isAscending;           //Sort ascending or descending
     
@@ -31,7 +30,6 @@ public class OrderBy extends Operator {
         this.isAscending = isAscending;
         this.base = base;
         this.compareAttri = compareAttri;
-        this.attrIndex = new ArrayList<>();
     }
 
     public boolean getOrderType() {
@@ -56,12 +54,7 @@ public class OrderBy extends Operator {
         int tuplesize = schema.getTupleSize();
         batchsize = Batch.getPageSize() / tuplesize;
 
-        // populate the index of attribute to sort
-        for (int i = 0; i < compareAttri.size(); i++) {
-            attrIndex.add(base.getSchema().indexOf(compareAttri.get(i)));
-        }
-
-        sort = new Sort(base, attrIndex, numBuff, isAscending);
+        sort = new Sort(base, compareAttri, numBuff, isAscending);
         if (!sort.open()) {
             System.out.println("Unable to open sort");
             return false;
