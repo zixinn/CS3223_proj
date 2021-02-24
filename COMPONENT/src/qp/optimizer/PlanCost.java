@@ -174,17 +174,19 @@ public class PlanCost {
         long numpages = (long) Math.ceil((double) numtuples / (double) pagesize);
         long numbuff = BufferManager.numBuffer;
         // Multi-way merge sort cost. Cost may be lesser depending on the number of duplicates
-        return 2 * numpages * (1 + (long) Math.ceil(Math.log(Math.ceil((double) numpages / numbuff)) / Math.log(numbuff - 1)));
+        long sort = 2 * numpages * (1 + (long) Math.ceil(Math.log(Math.ceil((double) numpages / numbuff)) / Math.log(numbuff - 1)));
+        cost = cost + sort;
+        return numtuples;
     }
 
-    
     protected long getStatistics(OrderBy node) {
         long numbuff = BufferManager.getBuffers();
         long base = calculateCost(node.getBase());
         long tupleSize = node.getSchema().getTupleSize();
         long pages = (long) Math.ceil(((double) base) / (double) (Math.max(1, Batch.getPageSize() / tupleSize)));
         long sort = 2 * pages * (1 + (long) Math.ceil(Math.log(Math.ceil((double) pages / numbuff)) / Math.log(numbuff - 1)));
-        return sort + base;
+        cost = cost + sort;
+        return base;
     }
 
     protected long getStatistics(GroupBy node) {
@@ -192,8 +194,8 @@ public class PlanCost {
         long pagesize = Math.max(Batch.getPageSize() / node.getSchema().getTupleSize(), 1);
         long numpages = (long) Math.ceil((double) numtuples / (double) pagesize);
         long numbuff = BufferManager.getBuffers();
-        long sortcost = 2 * numpages * (1 + (long) Math.ceil(Math.log(Math.ceil((double) numpages / numbuff)) / Math.log(numbuff - 1)));
-        cost = cost + sortcost;
+        long sort = 2 * numpages * (1 + (long) Math.ceil(Math.log(Math.ceil((double) numpages / numbuff)) / Math.log(numbuff - 1)));
+        cost = cost + sort;
         return numtuples;
     }
 

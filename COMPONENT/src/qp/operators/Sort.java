@@ -152,6 +152,15 @@ public class Sort extends Operator {
                     pq.add(new TupleWithId(t, i, curs[i]));
                     curs[i]++;
                 }
+            } else {
+                try {
+                    instream[i].close();
+                    String dfname = "SortedRun-" + (numpass - 1) + "-" + (start + i) + "-" + this.hashCode();
+                    File f = new File(dfname);
+                    f.delete();
+                } catch (IOException io) {
+                    System.err.println("Sort: Error in reading temporary file");
+                }
             }
         }
 
@@ -180,13 +189,13 @@ public class Sort extends Operator {
                 } catch (EOFException e) {
                     try {
                         instream[runid].close();
+                        done[runid] = true;
+                        String dfname = "SortedRun-" + (numpass - 1) + "-" + (start + runid) + "-" + this.hashCode();
+                        File f = new File(dfname);
+                        f.delete();
                     } catch (IOException io) {
                         System.err.println("Sort: Error in reading temporary file");
                     }
-                    done[runid] = true;
-                    String dfname = "SortedRun-" + (numpass - 1) + "-" + (start + runid) + "-" + this.hashCode();
-                    File f = new File(dfname);
-                    f.delete();
                 } catch (ClassNotFoundException c) {
                     System.err.println("Sort: Error in deserialising temporary file ");
                     System.exit(1);
@@ -198,6 +207,16 @@ public class Sort extends Operator {
                     for (Tuple t : batch.getAllTuples()) {
                         pq.add(new TupleWithId(t, runid, curs[runid]));
                         curs[runid]++;
+                    }
+                } else {
+                    try {
+                        instream[runid].close();
+                        done[runid] = true;
+                        String dfname = "SortedRun-" + (numpass - 1) + "-" + (start + runid) + "-" + this.hashCode();
+                        File f = new File(dfname);
+                        f.delete();
+                    } catch (IOException io) {
+                        System.err.println("Sort: Error in reading temporary file");
                     }
                 }
             }
