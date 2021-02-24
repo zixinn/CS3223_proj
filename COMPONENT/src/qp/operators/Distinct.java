@@ -19,22 +19,23 @@ public class Distinct extends Operator {
     ArrayList<Attribute> attrset;   // Set of atttributes to sort
     int numBuff;                    // Number of buffers available
     Batch outbatch;                 // Buffer for output stream
-    TreeSet<Tuple> tuples;        // The tuples in-memory
+    TreeSet<Tuple> tuples;          // The tuples in-memory
     ObjectInputStream in;           // File pointer to the sorted runs file
 
     // For merging
-    ArrayList<ObjectInputStream> sortedRunFiles; // Input file pointers for each sorted run
-    boolean[] eof;                                 // keep track of eof of each file
-    Batch[] inBufferPages;
-    int page;
-    boolean eos;                                 // eos for everything
-    Tuple prevAddedTuple;
-    Tuple nextTupleToAdd;
-    int start, stop;
+    ArrayList<ObjectInputStream> sortedRunFiles;    // Input file pointers for each sorted run
+    boolean[] eof;                                  // keep track of eof of each file input stream
+    Batch[] inBufferPages;                          // Input Buffer pages
+    int page;                                       // page that we took the nextTupleToAdd from
+    boolean eos;                                    // eos for everything
+    Tuple prevAddedTuple;                           // The tuple we have just added to outbatch
+    Tuple nextTupleToAdd;                           // The tuple that we will be adding to outbatch next
+    int start, stop;                                // start&stop pointers to keep track of the sorted runs we are working on
 
 
     int numRun;                     // Count number of sorted runs generated
-    int mergecurs;                    // Cursor to keep track of the number of passes of merge
+    int mergecurs;                  // Cursor to keep track of the number of passes of merge
+    int passes;                     // Cursor to keep track of how many passes
     boolean eos_unsorted;           // Whether end of stream (unsorted result) is reached
     boolean eos_sorted;             // Whether end of stream (sorted result) is reached
 
@@ -68,6 +69,7 @@ public class Distinct extends Operator {
 
         eos_unsorted = false;
         mergecurs = 0;
+        passes = 0;
         eos_sorted = false;
         tuples = new TreeSet<>(new Comparator<Tuple>() {
             @Override
@@ -89,7 +91,7 @@ public class Distinct extends Operator {
             Attribute attr = attrset.get(i);
 
             if (attr.getAggType() != Attribute.NONE) {
-                System.err.println("Aggragation is not implemented.");
+                System.err.println("Aggregation is not implemented.");
                 System.exit(1);
             }
 
@@ -97,27 +99,8 @@ public class Distinct extends Operator {
             attrIndex.add(index);
         }
 
-        boolean success;
-        success = generateSortedRuns();
-
-        // open new input streams to read from sortedRuns
-        for (int i = 1; i <= numRun; i++) {
-            fname = "SortedRun-" + String.valueOf(i);
-            try {
-                sortedRunFiles.add(new ObjectInputStream(new FileInputStream(fname)));
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-        }
-
-        success = success && multiWayMerge();
-        System.out.println("Number of sorted Runs: " + numRun);
-        if (numRun > 1) {
-            fname = "Merge-" + String.valueOf(mergecurs);
-        } else {
-            // Only 1 sortedrun generated.
-            fname = "SortedRun-" + String.valueOf(1);
-        }
+        boolean success = generateSortedRuns() && multiWayMerge();
+        fname = "SortedRun" + passes + "-" + (numRun-1);
         try {
             System.out.println(" ~~~~~~ READING FROM: " + fname);
             in = new ObjectInputStream(new FileInputStream(fname));
@@ -132,7 +115,6 @@ public class Distinct extends Operator {
     public Batch next() {
         outbatch = new Batch(batchsize);
         if (eos_sorted) {
-            close();
             return null;
         }
         try {
@@ -160,26 +142,34 @@ public class Distinct extends Operator {
     }
 
     private boolean multiWayMerge() {
-        start = 0;
-        while (numRun - 1 > start) {
-            if (numRun - start > numBuff - 1) {
-                stop = start + numBuff - 2;
-            } else {
-                // Last Pass
-                stop = numRun - 1;
+        while (numRun > numBuff - 1) {
+            System.out.println("Num runs: " + numRun);
+            mergecurs = 0;
+            start = 0;
+            loadInputStreams();
+            close();
+            passes++;
+            while (numRun - 1 > start) {
+                System.out.println("Passes: " + passes);
+                if (numRun - start > numBuff - 1) {
+                    stop = start + numBuff - 2;
+                } else {
+                    // Last merge for the current pass
+                    stop = numRun - 1;
+                }
+                merge(start, stop);
+                start = stop;
             }
-            merge(start, stop);
-            start = stop;
+            numRun = mergecurs;
         }
         return true;
     }
 
     private boolean merge(int start, int stop) {
-        mergecurs++;
 
         System.out.println("========== Run curs: " + mergecurs + " Numrun " + numRun + " Start " + start + " stop: " + stop + " numbuff - 1: " + (numBuff-1));
-        eof = new boolean[stop - start + 1];   // keep track of eof of each file
-        inBufferPages = new Batch[stop - start + 1];;          // Buffer pages for merging
+        eof = new boolean[stop - start + 1];
+        inBufferPages = new Batch[stop - start + 1];
 
         ObjectInputStream merged = null;
 
@@ -189,7 +179,9 @@ public class Distinct extends Operator {
             if (start == 0) {
                 nextBatch = (Batch) sortedRunFiles.get(0).readObject();
             } else {
-                merged = new ObjectInputStream(new FileInputStream("Merge-" + (mergecurs -1)));
+                fname = "SortedRun" + (passes) + "-" + (mergecurs-1);
+                System.out.println(fname);
+                merged = new ObjectInputStream(new FileInputStream(fname));
                 nextBatch = (Batch) merged.readObject();
             }
         } catch (EOFException e) {
@@ -235,7 +227,7 @@ public class Distinct extends Operator {
 
         // materialise file to write output for merge
         ObjectOutputStream out;
-        fname = "Merge-" + String.valueOf(mergecurs);
+        fname = "SortedRun" + passes + "-" + mergecurs;
         try {
             out = new ObjectOutputStream(new FileOutputStream(fname));
         } catch (IOException io) {
@@ -247,7 +239,7 @@ public class Distinct extends Operator {
             outbatch = new Batch(batchsize);
             while (!outbatch.isFull()) {
                 nextTupleToAdd = null;
-                page = -1; // page that we took the nextTupleToAdd from
+                page = -1;
                 // Find the next tuple to add
                 for (int i = 0; i < stop - start; i++) {
                     //System.out.println("i: " + i);
@@ -355,6 +347,7 @@ public class Distinct extends Operator {
             return false;
         }
 
+        mergecurs++;
         return true;
     }
 
@@ -383,9 +376,8 @@ public class Distinct extends Operator {
             if (tuples.isEmpty()) {
                 return true;
             }
-
+            fname = "SortedRun0-" + numRun;
             numRun++;
-            fname = "SortedRun-" + String.valueOf(numRun);
             // Write sorted runs to files
             try {
                 ObjectOutputStream out = new ObjectOutputStream(new FileOutputStream(fname));
@@ -406,14 +398,23 @@ public class Distinct extends Operator {
         return true;
     }
 
-    // delete all sorted run files
-    public boolean close() {
-        for (int i = 1; i <= numRun; i++) {
-            File f = new File("SortedRun-" + String.valueOf(i));
-            f.delete();
+    // open all input streams of sorted runs for current pass
+    private void loadInputStreams() {
+        sortedRunFiles = new ArrayList<>();
+        for (int i = 0; i < numRun; i++) {
+            fname = "SortedRun" + passes + "-" + String.valueOf(i);
+            try {
+                sortedRunFiles.add(new ObjectInputStream(new FileInputStream(fname)));
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
         }
-        for (int i = 1; i <= mergecurs; i++) {
-            File f = new File("Merge-" + String.valueOf(i));
+    }
+
+    // delete sorted run files for current pass
+    public boolean close() {
+        for (int j = 0; j < numRun; j++) {
+            File f = new File("SortedRun" + passes + "-" + j);
             f.delete();
         }
         return true;
