@@ -36,9 +36,6 @@ public class Sort extends Operator {
         this.isAscending = isAscending;
     }
 
-    private String getSortedRunfname(int numpass, int numrun) {
-        return "SortedRun-" + numpass + "-" + numrun + "-" + this.hashCode();
-    }
 
     private int compareTuples(Tuple t1, Tuple t2) {
         for (int index : attrIndex) {
@@ -254,7 +251,7 @@ public class Sort extends Operator {
         Batch outbatch = new Batch(batchsize);
         try {
             outbatch = (Batch) insorted.readObject();
-        } catch (EOFException EOF) {
+        } catch (EOFException e) {
             eos = true;
             try {
                 insorted.close();
