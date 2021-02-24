@@ -80,4 +80,8 @@ public class Batch implements Serializable {
         else
             return false;
     }
+
+    public ArrayList<Tuple> getAllTuples() {
+        return tuples;
+    }
 }
