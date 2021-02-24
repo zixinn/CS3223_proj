@@ -80,6 +80,8 @@ public class PlanCost {
             return getStatistics((Distinct) node);
         } else if (node.getOpType() == OpType.SORT) {
             return getStatistics((OrderBy) node);
+        } else if (node.getOpType() == OpType.GROUPBY) {
+            return getStatistics((GroupBy) node);
         }
         System.out.println("operator is not supported");
         isFeasible = false;
@@ -183,6 +185,16 @@ public class PlanCost {
         long pages = (long) Math.ceil(((double) base) / (double) (Math.max(1, Batch.getPageSize() / tupleSize)));
         long sort = 2 * pages * (1 + (long) Math.ceil(Math.log(Math.ceil((double) pages / numbuff)) / Math.log(numbuff - 1)));
         return sort + base;
+    }
+
+    protected long getStatistics(GroupBy node) {
+        long numtuples = calculateCost(node.getBase());
+        long pagesize = Math.max(Batch.getPageSize() / node.getSchema().getTupleSize(), 1);
+        long numpages = (long) Math.ceil((double) numtuples / (double) pagesize);
+        long numbuff = BufferManager.getBuffers();
+        long sortcost = 2 * numpages * (1 + (long) Math.ceil(Math.log(Math.ceil((double) numpages / numbuff)) / Math.log(numbuff - 1)));
+        cost = cost + sortcost;
+        return numtuples;
     }
 
     /**

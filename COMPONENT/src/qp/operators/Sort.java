@@ -229,6 +229,12 @@ public class Sort extends Operator {
         attrIndex = new ArrayList<>(attrset.size());
         for (int i = 0; i < attrset.size(); i++) {
             Attribute attr = attrset.get(i);
+
+            if (attr.getAggType() != Attribute.NONE) {
+                System.err.println("Aggragation is not implemented.");
+                System.exit(1);
+            }
+
             int index = baseSchema.indexOf(attr.getBaseAttribute());
             attrIndex.add(schema.indexOf(attr));
         }

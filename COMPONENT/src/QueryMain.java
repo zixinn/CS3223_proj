@@ -88,7 +88,7 @@ public class QueryMain {
      * As buffer manager is not implemented, just input the number of buffers available.
      **/
     private static void configureBufferManager(int numJoin, String[] args, BufferedReader in, SQLQuery sqlquery) {
-        if (numJoin != 0 || sqlquery.isDistinct() || !sqlquery.getOrderByList().isEmpty()) {
+        if (numJoin != 0 || sqlquery.isDistinct() || !sqlquery.getOrderByList().isEmpty() || !sqlquery.getGroupByList().isEmpty() ) {
             int numBuff = 1000;
             if (args.length < 4) {
                 System.out.println("enter the number of buffers available");

@@ -91,6 +91,12 @@ public class RandomOptimizer {
             ((OrderBy)node).setNumBuff(numBuff);
             ((OrderBy)node).setBase(base);
             return node;
+        } else if (node.getOpType() == OpType.GROUPBY) {
+            Operator base = makeExecPlan(((GroupBy) node).getBase());
+            int numBuff = BufferManager.getBuffers();
+            ((GroupBy)node).setNumBuff(numBuff);
+            ((GroupBy)node).setBase(base);
+            return node;
         } else {
             return node;
         }
