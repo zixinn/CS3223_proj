@@ -192,7 +192,8 @@ public class PlanCost {
         long outtuples = (long) Math.ceil(tuples);
 
         /** Calculate the cost of the operation **/
-        long joincost = leftpages * rightpages;
+        long numbuff = BufferManager.getBuffersPerJoin();
+        long joincost = leftpages + (int) Math.ceil(leftpages / (numbuff - 2)) * rightpages;
 
         cost = cost + joincost;
 

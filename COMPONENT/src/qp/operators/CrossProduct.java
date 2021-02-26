@@ -21,10 +21,13 @@ public class CrossProduct extends Operator {
     ArrayList<Integer> rightindex;  // Indices of the join attributes in right table
     String rfname;                  // The file name where the right table is materialized
     Batch outbatch;                 // Buffer page for output
-    Batch leftbatch;                // Buffer page for left input stream
+    int blocksize;                  // No. of blocks for the outer (left) table
+    ArrayList<Batch> leftblock;     // Buffer pages for left input stream
     Batch rightbatch;               // Buffer page for right input stream
     ObjectInputStream in;           // File pointer to the right hand materialized file
+    int numBuff;                    // Number of buffers available
 
+    int lblockcurs;                 // Cursor for left block
     int lcurs;                      // Cursor for left side buffer
     int rcurs;                      // Cursor for right side buffer
     boolean eosl;                   // Whether end of stream (left table) is reached
@@ -34,6 +37,14 @@ public class CrossProduct extends Operator {
         super(OpType.CROSSPRODUCT);
         this.left = left;
         this.right = right;
+    }
+
+    public int getNumBuff() {
+        return numBuff;
+    }
+
+    public void setNumBuff(int num) {
+        this.numBuff = num;
     }
 
     public Operator getLeft() {
@@ -61,6 +72,8 @@ public class CrossProduct extends Operator {
         /** select number of tuples per batch **/
         int tuplesize = schema.getTupleSize();
         batchsize = Batch.getPageSize() / tuplesize;
+        blocksize = numBuff - 2;
+        leftblock = new ArrayList<>();
 
         /** find indices attributes of join conditions **/
         leftindex = new ArrayList<>();
@@ -69,6 +82,7 @@ public class CrossProduct extends Operator {
         Batch rightpage;
 
         /** initialize the cursors of input buffers **/
+        lblockcurs = 0;
         lcurs = 0;
         rcurs = 0;
         eosl = false;
@@ -108,25 +122,28 @@ public class CrossProduct extends Operator {
             return false;
     }
 
-    /**
-     * from input buffers selects the tuples satisfying join condition
-     * * And returns a page of output tuples
-     **/
     public Batch next() {
-        int i, j;
-        if (eosl) {
+        int i, j, k;
+        if (eosl == true && lblockcurs == 0 && lcurs == 0) {
             return null;
         }
         outbatch = new Batch(batchsize);
         while (!outbatch.isFull()) {
-            if (lcurs == 0 && eosr == true) {
-                /** new left page is to be fetched**/
-                leftbatch = (Batch) left.next();
-                if (leftbatch == null) {
-                    eosl = true;
+            if (lcurs == 0 && lblockcurs == 0 && eosr == true) {
+                /** new left block is to be fetched**/
+                leftblock.clear();
+                for (k = 0; k < blocksize; k++) {
+                    Batch leftbatch = (Batch) left.next();
+                    if (leftbatch == null) {
+                        eosl = true;
+                        break;
+                    }
+                    leftblock.add(leftbatch);
+                }
+                if (leftblock.isEmpty()) {
                     return outbatch;
                 }
-                /** Whenever a new left page came, we have to start the
+                /** Whenever a new left block came, we have to start the
                  ** scanning of right table
                  **/
                 try {
@@ -140,35 +157,47 @@ public class CrossProduct extends Operator {
             }
             while (eosr == false) {
                 try {
-                    if (rcurs == 0 && lcurs == 0) {
+                    if (rcurs == 0 && lcurs == 0 && lblockcurs == 0) {
                         rightbatch = (Batch) in.readObject();
                     }
-                    for (i = lcurs; i < leftbatch.size(); ++i) {
-                        for (j = rcurs; j < rightbatch.size(); ++j) {
-                            Tuple lefttuple = leftbatch.get(i);
+                    for (k = lblockcurs; k < leftblock.size(); k++) {
+                        Batch leftbatch = leftblock.get(k);
+                        for (i = lcurs; i < leftbatch.size(); ++i) {
+                            for (j = rcurs; j < rightbatch.size(); ++j) {
+                                Tuple lefttuple = leftbatch.get(i);
                             Tuple righttuple = rightbatch.get(j);
-                            Tuple outtuple = lefttuple.joinWith(righttuple);
-                            outbatch.add(outtuple);
-                            if (outbatch.isFull()) {
-                                if (i == leftbatch.size() - 1 && j == rightbatch.size() - 1) {  //case 1
-                                    lcurs = 0;
-                                    rcurs = 0;
-                                } else if (i != leftbatch.size() - 1 && j == rightbatch.size() - 1) {  //case 2
-                                    lcurs = i + 1;
-                                    rcurs = 0;
-                                } else if (i == leftbatch.size() - 1 && j != rightbatch.size() - 1) {  //case 3
-                                    lcurs = i;
-                                    rcurs = j + 1;
-                                } else {
-                                    lcurs = i;
-                                    rcurs = j + 1;
+                                Tuple outtuple = lefttuple.joinWith(righttuple);
+                                outbatch.add(outtuple);
+                                if (outbatch.isFull()) {
+                                    if (k == leftblock.size() - 1 && i == leftbatch.size() - 1 && j == rightbatch.size() - 1) {  // case 1 : just done with entire left block
+                                        lblockcurs = 0;
+                                        lcurs = 0;
+                                        rcurs = 0;
+                                    } else if (k != leftblock.size() - 1 && i == leftbatch.size() - 1 && j == rightbatch.size() - 1) { // case 2: done with the current leftblock, move on to next
+                                        lblockcurs = k + 1;
+                                        lcurs = 0;
+                                        rcurs = 0;
+                                    } else if (i != leftbatch.size() - 1 && j == rightbatch.size() - 1) {  // case 3: still on same block, just done with a leftbatch
+                                        lblockcurs = k;
+                                        lcurs = i + 1;
+                                        rcurs = 0;
+                                    } else if (i == leftbatch.size() - 1 && j != rightbatch.size() - 1) {  // case 4: still on same block, same leftbatch, iterating through rightbatch
+                                        lblockcurs = k;
+                                        lcurs = i;
+                                        rcurs = j + 1;
+                                    } else { // case 5: still on same block, same leftbatch, iterating through rightbatch
+                                        lblockcurs = k;
+                                        lcurs = i;
+                                        rcurs = j + 1;
+                                    }
+                                    return outbatch;
                                 }
-                                return outbatch;
                             }
+                            rcurs = 0;
                         }
-                        rcurs = 0;
+                        lcurs = 0;
                     }
-                    lcurs = 0;
+                    lblockcurs = 0;
                 } catch (EOFException e) {
                     try {
                         in.close();
