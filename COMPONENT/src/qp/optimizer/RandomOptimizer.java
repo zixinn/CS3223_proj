@@ -97,6 +97,14 @@ public class RandomOptimizer {
             ((GroupBy)node).setNumBuff(numBuff);
             ((GroupBy)node).setBase(base);
             return node;
+        } else if (node.getOpType() == OpType.CROSSPRODUCT) {
+            Operator left = makeExecPlan(((CrossProduct) node).getLeft());
+            Operator right = makeExecPlan(((CrossProduct) node).getRight());
+            int numbuff = BufferManager.getBuffersPerJoin();
+            ((CrossProduct)node).setLeft(left);
+            ((CrossProduct)node).setRight(right);
+            ((CrossProduct)node).setNumBuff(numbuff);
+            return node;
         } else {
             return node;
         }
