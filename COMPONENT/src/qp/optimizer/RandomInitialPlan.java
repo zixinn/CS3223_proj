@@ -55,6 +55,11 @@ public class RandomInitialPlan {
         if (numJoin != 0) {
             createJoinOp();
         }
+
+        if (numJoin == 0 && fromlist.size() > 1) {
+            createCrossProductOp();
+        }
+
         createProjectOp();
 
         if (sqlquery.isDistinct()) {
@@ -178,6 +183,29 @@ public class RandomInitialPlan {
          **/
         if (numJoin != 0)
             root = jn;
+    }
+
+    /**
+     * create cross product operators
+     **/
+    public void createCrossProductOp() {
+        int numJoin = fromlist.size() - 1;
+        CrossProduct cp = null;
+        for (int i = 0; i < numJoin; i++) {
+            Operator left = (Operator) tab_op_hash.get(fromlist.get(i));
+            Operator right = (Operator) tab_op_hash.get(fromlist.get(i+1));
+            cp = new CrossProduct(left, right);
+            Schema newsche = left.getSchema().joinWith(right.getSchema());
+            cp.setSchema(newsche);
+            modifyHashtable(left, cp);
+            modifyHashtable(right, cp);
+        }
+
+        /** The last join operation is the root for the
+         ** constructed till now
+         **/
+        if (numJoin != 0)
+            root = cp;
     }
 
     public void createProjectOp() {

@@ -82,6 +82,8 @@ public class PlanCost {
             return getStatistics((OrderBy) node);
         } else if (node.getOpType() == OpType.GROUPBY) {
             return getStatistics((GroupBy) node);
+        } else if (node.getOpType() == OpType.CROSSPRODUCT) {
+            return getStatistics((CrossProduct) node);
         }
         System.out.println("operator is not supported");
         isFeasible = false;
@@ -159,6 +161,39 @@ public class PlanCost {
                 System.out.println("join type is not supported");
                 return 0;
         }
+        cost = cost + joincost;
+
+        return outtuples;
+    }
+
+    protected long getStatistics(CrossProduct node) {
+        long lefttuples = calculateCost(node.getLeft());
+        long righttuples = calculateCost(node.getRight());
+
+        if (!isFeasible) {
+            return 0;
+        }
+
+        Schema leftschema = node.getLeft().getSchema();
+        Schema rightschema = node.getRight().getSchema();
+
+        /** Get size of the tuple in output & correspondigly calculate
+         ** buffer capacity, i.e., number of tuples per page **/
+        long tuplesize = node.getSchema().getTupleSize();
+        long outcapacity = Math.max(1, Batch.getPageSize() / tuplesize);
+        long leftuplesize = leftschema.getTupleSize();
+        long leftcapacity = Math.max(1, Batch.getPageSize() / leftuplesize);
+        long righttuplesize = rightschema.getTupleSize();
+        long rightcapacity = Math.max(1, Batch.getPageSize() / righttuplesize);
+        long leftpages = (long) Math.ceil(((double) lefttuples) / (double) leftcapacity);
+        long rightpages = (long) Math.ceil(((double) righttuples) / (double) rightcapacity);
+
+        double tuples = (double) lefttuples * righttuples;
+        long outtuples = (long) Math.ceil(tuples);
+
+        /** Calculate the cost of the operation **/
+        long joincost = leftpages * rightpages;
+
         cost = cost + joincost;
 
         return outtuples;
