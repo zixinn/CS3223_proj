@@ -152,7 +152,7 @@ public class PlanCost {
                 joincost = leftpages * rightpages;
                 break;
             case JoinType.BLOCKNESTED:
-                joincost = leftpages + (int) Math.ceil(leftpages / (numbuff - 2)) * rightpages;
+                joincost = leftpages + (long) Math.ceil((double) leftpages / (double) (numbuff - 2)) * rightpages;
                 break;
             case JoinType.SORTMERGE:
                 long sortleft = 2 * leftpages * (1 + (long) Math.ceil(Math.log(Math.ceil((double) leftpages / numbuff)) / Math.log(numbuff - 1)));
@@ -198,7 +198,7 @@ public class PlanCost {
 
         /** Calculate the cost of the operation **/
         long numbuff = BufferManager.getBuffersPerJoin();
-        long joincost = leftpages + (int) Math.ceil(leftpages / (numbuff - 2)) * rightpages;
+        long joincost = leftpages + (long) Math.ceil((double) leftpages / (double) (numbuff - 2)) * rightpages;
 
         cost = cost + joincost;
 
