@@ -13,30 +13,30 @@ import java.io.*;
 import java.util.*;
 
 public class SortMergeJoin extends Join {
-    int batchsize;                          // Number of tuples per out batch
-    ArrayList<Attribute> leftattribute;     // Join attributes in left table
-    ArrayList<Attribute> rightattribute;    // Join attributes in right table
-    ArrayList<Integer> leftindex;           // Indices of the join attributes in left table
-    ArrayList<Integer> rightindex;          // Indices of the join attributes in right table
-    Batch leftbatch;                        // Buffer page for left input stream
-    Batch rightbatch;                       // Buffer page for right input stream
-    Batch outbatch;                         // Buffer page for output
+    int batchsize;                                          // Number of tuples per out batch
+    ArrayList<Attribute> leftattribute;                     // Join attributes in left table
+    ArrayList<Attribute> rightattribute;                    // Join attributes in right table
+    ArrayList<Integer> leftindex;                           // Indices of the join attributes in left table
+    ArrayList<Integer> rightindex;                          // Indices of the join attributes in right table
+    Batch leftbatch;                                        // Buffer page for left input stream
+    Batch rightbatch;                                       // Buffer page for right input stream
+    Batch outbatch;                                         // Buffer page for output
 
-    Sort lsort;                             // Sort left table
-    Sort rsort;                             // Sort right table
-    Tuple lefttuple = null;                 // Current tuple from left buffer page
-    Tuple righttuple = null;                // Current tuple from right buffer page
-    Tuple prevtuple = null;                 // Current tuple from left buffer page
+    Sort lsort;                                             // Sort left table
+    Sort rsort;                                             // Sort right table
+    Tuple lefttuple = null;                                 // Current tuple from left buffer page
+    Tuple righttuple = null;                                // Current tuple from right buffer page
+    Tuple prevtuple = null;                                 // Current tuple from left buffer page
 
-    int lcurs = 0;                          // Cursor for left block
-    int rcurs = 0;                          // Cursor for right block
-    boolean eosl = false;                   // Whether end of stream (left table) is reached
-    boolean eosr = false;                   // Whether end of stream (right table) is reached
+    int lcurs = 0;                                          // Cursor for left block
+    int rcurs = 0;                                          // Cursor for right block
+    boolean eosl = false;                                   // Whether end of stream (left table) is reached
+    boolean eosr = false;                                   // Whether end of stream (right table) is reached
 
-    ArrayList<Tuple> leftpartition = new ArrayList<>();
-    ArrayList<Tuple> rightpartition = new ArrayList<>();
-    int lpcurs = 0;
-    int rpcurs = 0;
+    ArrayList<Tuple> leftpartition = new ArrayList<>();     // Left partition with same sort key
+    ArrayList<Tuple> rightpartition = new ArrayList<>();    // Right partition with same sort key
+    int lpcurs = 0;                                         // Cursor for left partition
+    int rpcurs = 0;                                         // Cursor for right partition
 
     public SortMergeJoin(Join jn) {
         super(jn.getLeft(), jn.getRight(), jn.getConditionList(), jn.getOpType());
@@ -45,10 +45,17 @@ public class SortMergeJoin extends Join {
         numBuff = jn.getNumBuff();
     }
 
+    /**
+     * During open finds the index of the join attributes
+     * * Sort the left and right hand side
+     * * Opens the connections
+     **/
     public boolean open() {
+        /** select number of tuples per batch **/
         int tupleSize = schema.getTupleSize();
         batchsize = Batch.getPageSize() / tupleSize;
 
+        /** find indices attributes of join conditions **/
         leftindex = new ArrayList<>();
         rightindex = new ArrayList<>();
         leftattribute = new ArrayList<>();
@@ -65,12 +72,17 @@ public class SortMergeJoin extends Join {
         if (!left.open()) return false;
         if (!right.open()) return false;
 
+        /** sort the left and right hand side table **/
         lsort = new Sort(left, leftattribute, numBuff, true);
         rsort = new Sort(right, rightattribute, numBuff, true);
 
         return lsort.open() && rsort.open();
     }
 
+    /**
+     * from input buffers selects the tuples satisfying join condition
+     * * And returns a page of output tuples
+     **/
     public Batch next() {
         if (eosl || eosr) {
             close();
@@ -81,6 +93,7 @@ public class SortMergeJoin extends Join {
 
         while (!outbatch.isFull()) {
             if (lpcurs == 0 && rpcurs == 0) {
+                // new left page to be fetched to get first left tuple
                 if (lefttuple == null) {
                     leftbatch = (Batch) lsort.next();
                     if (leftbatch == null || leftbatch.isEmpty()) {
@@ -89,6 +102,7 @@ public class SortMergeJoin extends Join {
                     }
                     lefttuple = leftbatch.get(lcurs);
                 }
+                // new right page to be fetched to get first right tuple
                 if (righttuple == null) {
                     rightbatch = (Batch) rsort.next();
                     if (rightbatch == null || rightbatch.isEmpty()) {
@@ -98,6 +112,7 @@ public class SortMergeJoin extends Join {
                     righttuple = rightbatch.get(rcurs);
                 }
 
+                // advance left and right cursor until left and right tuples' sort key are equal
                 while (Tuple.compareTuples(lefttuple, righttuple, leftindex, rightindex) != 0) {
                     while (Tuple.compareTuples(lefttuple, righttuple, leftindex, rightindex) < 0) {
                         lcurs++;
@@ -127,6 +142,7 @@ public class SortMergeJoin extends Join {
 
                 prevtuple = lefttuple;
 
+                // read in all left tuples in the same partition
                 while (Tuple.compareTuples(lefttuple, righttuple, leftindex, rightindex) == 0) {
                     leftpartition.add(lefttuple);
                     lcurs++;
@@ -140,6 +156,8 @@ public class SortMergeJoin extends Join {
                     }
                     lefttuple = leftbatch.get(lcurs);
                 }
+
+                // read in all right tuples in the same partition
                 while (Tuple.compareTuples(prevtuple, righttuple, leftindex, rightindex) == 0) {
                     rightpartition.add(righttuple);
                     rcurs++;
@@ -155,6 +173,7 @@ public class SortMergeJoin extends Join {
                 }
             }
 
+            // perform cross product on left and right tuples in partition
             for (int i = lpcurs; i < leftpartition.size(); i++) {
                 for (int j = rpcurs; j < rightpartition.size(); j++) {
                     Tuple ltuple = leftpartition.get(i);
@@ -196,6 +215,9 @@ public class SortMergeJoin extends Join {
         return outbatch;
     }
 
+    /**
+     * Close the operator
+     */
     public boolean close() {
         lsort.close();
         rsort.close();

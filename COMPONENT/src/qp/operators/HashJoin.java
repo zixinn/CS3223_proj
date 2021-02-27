@@ -184,41 +184,41 @@ public class HashJoin extends Join{
             return null;
         }
 
-        if (numBuff < Math.sqrt(leftnumpages)) {
-            if (pcurs == -1) {
-                pcurs++;
-            }
+        // if (numBuff < Math.sqrt(leftnumpages)) {
+        //     if (pcurs == -1) {
+        //         pcurs++;
+        //     }
 
-            // recursively partition each partition
-            while (pcurs < numBuff - 1) {
-                if (hashjoin == null) {
-                    lfname = "HJLtemp-" + String.valueOf(pcurs) + this.hashCode();
-                    rfname = "HJRtemp-" + String.valueOf(pcurs) + this.hashCode();
-                    Scan s1 = new Scan(lfname, OpType.SCAN, true);
-                    s1.setSchema(left.schema);
-                    Scan s2 = new Scan(rfname, OpType.SCAN, true);
-                    s2.setSchema(right.schema);
-                    Join j = new Join(s1, s2, this.conditionList, this.optype);
-                    j.setSchema(schema);
-                    j.setJoinType(JoinType.HASHJOIN);
-                    j.setNumBuff(numBuff);
-                    hashjoin = new HashJoin(j);
-                    hashjoin.open();
-                }
+        //     // recursively partition each partition
+        //     while (pcurs < numBuff - 1) {
+        //         if (hashjoin == null) {
+        //             lfname = "HJLtemp-" + String.valueOf(pcurs) + this.hashCode();
+        //             rfname = "HJRtemp-" + String.valueOf(pcurs) + this.hashCode();
+        //             Scan s1 = new Scan(lfname, OpType.SCAN, true);
+        //             s1.setSchema(left.schema);
+        //             Scan s2 = new Scan(rfname, OpType.SCAN, true);
+        //             s2.setSchema(right.schema);
+        //             Join j = new Join(s1, s2, this.conditionList, this.optype);
+        //             j.setSchema(schema);
+        //             j.setJoinType(JoinType.HASHJOIN);
+        //             j.setNumBuff(numBuff);
+        //             hashjoin = new HashJoin(j);
+        //             hashjoin.open();
+        //         }
 
-                outbatch = hashjoin.next();
-                if (outbatch == null) {
-                    hashjoin.close();
-                    hashjoin = null;
-                    pcurs++;
-                } else {
-                    return outbatch;
-                }
-            }
+        //         outbatch = hashjoin.next();
+        //         if (outbatch == null) {
+        //             hashjoin.close();
+        //             hashjoin = null;
+        //             pcurs++;
+        //         } else {
+        //             return outbatch;
+        //         }
+        //     }
 
-            return null;
+        //     return null;
 
-        } else {
+        // } else {
             outbatch = new Batch(batchsize);
             while (!outbatch.isFull()) {
                 if (lcurs == 0 && rcurs == 0 && eosr == true) {
@@ -387,7 +387,7 @@ public class HashJoin extends Join{
             }
 
             return outbatch;
-        }
+        // }
     }
 
     /**

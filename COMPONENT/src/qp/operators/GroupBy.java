@@ -43,6 +43,12 @@ public class GroupBy extends Operator {
         this.numbuff = num;
     }
 
+    /**
+     * Opens the connection to the base operator
+     * * Also figures out what are the columns to be
+     * * grouped by and projected from the base operator
+     * * and sort the table on the attributes to group by
+     **/
     public boolean open() {
         int tuplesize = schema.getTupleSize();
         batchsize = Batch.getPageSize() / tuplesize;
@@ -56,7 +62,7 @@ public class GroupBy extends Operator {
         for (int i = 0; i < attrset.size(); ++i) {
             Attribute attr = attrset.get(i);
             if (attr.getAggType() != Attribute.NONE) {
-                System.err.println("Aggragation is not implemented.");
+                System.err.println("Aggregation is not implemented.");
                 System.exit(1);
             }
             attrIndex.add(baseSchema.indexOf(attr.getBaseAttribute()));
@@ -66,7 +72,7 @@ public class GroupBy extends Operator {
         for (int i = 0; i < groupbylist.size(); i++) {
             Attribute attr = attrset.get(i);
             if (attr.getAggType() != Attribute.NONE) {
-                System.err.println("Aggragation is not implemented.");
+                System.err.println("Aggregation is not implemented.");
                 System.exit(1);
             }
             groupbyIndex.add(baseSchema.indexOf(attr));
@@ -79,6 +85,10 @@ public class GroupBy extends Operator {
         return sort.open();
     }
 
+    /**
+     * Read next tuple from sorted relation 
+     * * and project relevant attributes
+     */
     public Batch next() {
         if (eos) {
             close();
@@ -130,6 +140,9 @@ public class GroupBy extends Operator {
         return outbatch;
     }
 
+    /**
+     * Close the operator
+     */
     public boolean close() {
         inbatch = null;
         base.close();
