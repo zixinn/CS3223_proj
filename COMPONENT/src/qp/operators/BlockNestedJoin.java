@@ -109,6 +109,7 @@ public class BlockNestedJoin extends Join {
     public Batch next() {
         int i, j, k;
         if (eosl == true && lblockcurs == 0 && lcurs == 0) {
+            close();
             return null;
         }
         outbatch = new Batch(batchsize);
