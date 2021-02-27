@@ -9,20 +9,17 @@ import java.util.ArrayList;
 
 public class OrderBy extends Operator {
 
-
-    private Operator base;                  // Base Operator
-    private int batchsize;                  // Number of tuples per out batch
-    private ArrayList<Attribute> attrset;   // Set of attributes to project
-    private ArrayList<Attribute> compareAttri; //Set of attributes to orderBy
-    private int numBuff;                    // Number of buffers available
-    private boolean isAscending;           //Sort ascending or descending
+    private Operator base;                      // Base Operator
+    private int batchsize;                      // Number of tuples per out batch
+    private ArrayList<Attribute> attrset;       // Set of attributes to project
+    private ArrayList<Attribute> compareAttri;  // Set of attributes to orderBy
+    private int numBuff;                        // Number of buffers available
+    private boolean isAscending;                // Sort ascending or descending
     
-    Batch inbatch;                  // Buffer for input
-    Batch outbatch;                 // Buffer for output
-    int curs;                       // Cursor to keep track of which file we at
+    Batch inbatch;                              // Buffer for input
+    Batch outbatch;                             // Buffer for output
+    int curs;                                   // Cursor to keep track of which file we at
     Sort sort;
-
-
 
     public OrderBy(Operator base, ArrayList<Attribute> attrset,  ArrayList<Attribute> compareAttri, boolean isAscending) {
         super(OpType.SORT);
@@ -49,6 +46,9 @@ public class OrderBy extends Operator {
         this.numBuff = num;
     }
 
+    /**
+     * Sorts the table from the base operator
+     **/
     public boolean open() {
         /** set number of tuples per batch **/
         int tuplesize = schema.getTupleSize();

@@ -104,6 +104,7 @@ public class NestedJoin extends Join {
     public Batch next() {
         int i, j;
         if (eosl) {
+            close();
             return null;
         }
         outbatch = new Batch(batchsize);
