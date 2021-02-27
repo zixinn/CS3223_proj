@@ -5,6 +5,7 @@ import qp.utils.Batch;
 import qp.utils.Schema;
 import qp.utils.Tuple;
 
+import java.io.*;
 import java.util.*;
 
 public class Distinct extends Operator {
@@ -14,12 +15,11 @@ public class Distinct extends Operator {
     ArrayList<Integer> attrIndex;       // Index of attributes to project
     int batchsize;                      // Number of tuples per out batch
     int numbuff;                        // Number of buffers available
-    int curs;                           // Cursor for input buffer
+    int totalnumrun;                    // Number of sorted runs
+    int totalnumpass;                   // Number of passes
+    ObjectInputStream insorted;         // Input stream for sorted results
     boolean eos;                        // Whether end of stream is reached
-    Sort sort;                          // Sort
     Tuple prevtuple;                    // Previous tuple
-    Batch inbatch;                      // Buffer page for input
-    Batch outbatch;                     // Buffer page for output
 
     public Distinct(Operator base, ArrayList<Attribute> as) {
         super(OpType.DISTINCT);
@@ -38,31 +38,34 @@ public class Distinct extends Operator {
     public void setNumBuff(int num) {
         this.numbuff = num;
     }
-
     public boolean open() {
+
         int tuplesize = schema.getTupleSize();
         batchsize = Batch.getPageSize() / tuplesize;
 
         if (!base.open()) return false;
 
-        sort = new Sort(base, attrset, numbuff, true);
-
         Schema baseSchema = base.getSchema();
         attrIndex = new ArrayList<>(attrset.size());
-        for (int i = 0; i < attrset.size(); ++i) {
+        for (int i = 0; i < attrset.size(); i++) {
             Attribute attr = attrset.get(i);
+
             if (attr.getAggType() != Attribute.NONE) {
-                System.err.println("Aggregation is not implemented.");
+                System.err.println("Aggragation is not implemented.");
                 System.exit(1);
             }
+
             attrIndex.add(baseSchema.indexOf(attr.getBaseAttribute()));
         }
-
-        curs = 0;
-        eos = false;
         prevtuple = null;
 
-        return sort.open();
+        totalnumrun = 0;
+        generateSortedRuns();
+        mergeSortedRuns(1, totalnumrun);
+
+        if (!base.close()) return false;
+
+        return true;
     }
 
     public Batch next() {
@@ -71,56 +74,28 @@ public class Distinct extends Operator {
             return null;
         }
 
-        outbatch = new Batch(batchsize);
-
-        while (!outbatch.isFull()) {
-            if (curs == 0) {
-                inbatch = (Batch) sort.next();
-                if (inbatch == null) {
-                    eos = true;
-                    return outbatch;
-                }
+        Batch outbatch = new Batch(batchsize);
+        try {
+            outbatch = (Batch) insorted.readObject();
+        } catch (EOFException e) {
+            eos = true;
+            try {
+                insorted.close();
+                String dfname = "SortedRun-" + (totalnumpass - 1) + "-" + 0 + "-" + this.hashCode();
+                File f = new File(dfname);
+                f.delete();
+            } catch (IOException io) {
+                System.err.println("Distinct: Error in reading temporary file");
             }
-
-            for (int i = curs; i < inbatch.size(); i++) {
-                Tuple tuple = inbatch.get(i);
-                ArrayList<Object> present = new ArrayList<>();
-
-                if (prevtuple != null && Tuple.compareTuples(prevtuple, tuple, attrIndex, attrIndex) == 0) { // duplicate
-                    if (Tuple.compareTuples(prevtuple, tuple, attrIndex, attrIndex) != 0) {
-                        System.err.println("Distinct: Error in projecting results");
-                        System.exit(1);
-                    }
-                    prevtuple = tuple;
-                } else {
-                    prevtuple = tuple;
-                    for (int j = 0; j < attrIndex.size(); j++) {
-                        Object data = tuple.dataAt(attrIndex.get(j));
-                        present.add(data);
-                    }
-                    Tuple outtuple = new Tuple(present);
-                    outbatch.add(outtuple);
-                    if (outbatch.isFull()) {
-                        if (i == inbatch.size() - 1) {
-                            curs = 0;
-                        } else {
-                            curs = i + 1;
-                        }
-                        return outbatch;
-                    }
-                }
-            }
-            curs = 0;
+            return outbatch;
+        } catch (ClassNotFoundException c) {
+            System.err.println("Distinct: Error in deserialising temporary file ");
+            System.exit(1);
+        } catch (IOException io) {
+            System.err.println("Distinct: Error in reading temporary file");
+            System.exit(1);
         }
-
         return outbatch;
-    }
-
-    public boolean close() {
-        inbatch = null;
-        base.close();
-        sort.close();
-        return true;
     }
 
     public Object clone() {
@@ -133,4 +108,215 @@ public class Distinct extends Operator {
         newDistinct.setSchema(newSchema);
         return newDistinct;
     }
+
+    private int compareTuples(Tuple t1, Tuple t2) {
+        for (int index : attrIndex) {
+            int res = Tuple.compareTuples(t1, t2, index, index);
+            if (res != 0) {
+                return res;
+            }
+        }
+        return 0;
+    }
+
+    private void generateSortedRuns() {
+        Batch batch = base.next();
+        while (batch != null) {
+            // Ensure no duplicates when generating sorted runs as well
+            TreeSet<Tuple> tuples = new TreeSet<>(this::compareTuples);
+            for (int i = 0; i < numbuff && batch != null; i++) {
+                for (int j = 0; j < batch.size(); j++) {
+                    tuples.add(batch.get(j));
+                }
+                batch = base.next();
+            }
+
+            String fname = "SortedRun-" + 0 + "-" + totalnumrun + "-" + this.hashCode();
+            try {
+                ObjectOutputStream out = new ObjectOutputStream(new FileOutputStream(fname));
+                Batch outbatch = new Batch(batchsize);
+                while (!tuples.isEmpty()) {
+                    Tuple tuple = tuples.pollFirst();
+                    outbatch.add(tuple);
+                    if (outbatch.isFull()) {
+                        out.writeObject(outbatch);
+                        outbatch = new Batch(batchsize);
+                    }
+                }
+                out.writeObject(outbatch);
+                out.close();
+            } catch (IOException e) {
+                System.err.println("Distinct: error writing to temporary file");
+                System.exit(1);
+            }
+            totalnumrun++;
+        }
+    }
+
+    private int mergeSortedRuns(int numpass, int numrun) {
+        if (numrun == 1) {
+            totalnumpass = numpass;
+            try {
+                String fname = "SortedRun-" + (numpass - 1) + "-" + (numrun - 1) + "-" + this.hashCode();
+                insorted = new ObjectInputStream(new FileInputStream(fname));
+            } catch (IOException e) {
+                System.err.println("Distinct: error in reading temporary file");
+            }
+            return numrun;
+        }
+
+        int numoutrun = 0;
+        int start = 0;
+        while (start < numrun) {
+            int end = start + numbuff - 1 < numrun ? start + numbuff - 1 : numrun;
+            mergeSortedRunsRange(start, end, numpass, numoutrun);
+            numoutrun++;
+            start += numbuff - 1;
+        }
+        return mergeSortedRuns(numpass + 1, numoutrun);
+    }
+
+    private void mergeSortedRunsRange(int start, int end, int numpass, int numrun) {
+        ObjectInputStream[] instream = new ObjectInputStream[end - start];
+        PriorityQueue<TupleWithId> pq = new PriorityQueue<>(batchsize, (t1, t2) -> compareTuples(t1.tuple, t2.tuple));
+        int[] curs = new int[end - start];
+        boolean[] done = new boolean[end - start];
+
+        String ofname = "SortedRun-" + numpass + "-" + numrun + "-" + this.hashCode();
+        ObjectOutputStream out = null;
+        try {
+            out = new ObjectOutputStream(new FileOutputStream(ofname));
+        } catch (IOException io) {
+            System.err.println("Distinct: error writing to temporary file");
+            System.exit(1);
+        }
+
+        // read sorted run into buffers
+        for (int i = 0; i < end - start; i++) {
+            String fname = "SortedRun-" + (numpass - 1) + "-" + (start + i) + "-" + this.hashCode();
+            try {
+                instream[i] = new ObjectInputStream(new FileInputStream(fname));
+            } catch (IOException io) {
+                System.err.println("Distinct: error in reading temporary file");
+                System.exit(1);
+            }
+
+            Batch batch = new Batch(batchsize);
+            try {
+                batch = (Batch) instream[i].readObject();
+            } catch (EOFException e) {
+                try {
+                    instream[i].close();
+                    String dfname = "SortedRun-" + (numpass - 1) + "-" + (start + i) + "-" + this.hashCode();
+                    File f = new File(dfname);
+                    f.delete();
+                } catch (IOException io) {
+                    System.err.println("Distinct: Error in reading temporary file");
+                }
+            } catch (ClassNotFoundException c) {
+                System.err.println("Distinct: Error in deserialising temporary file ");
+                System.exit(1);
+            } catch (IOException io) {
+                System.err.println("Distinct: Error in reading temporary file");
+                System.exit(1);
+            }
+            if (batch != null && !batch.isEmpty()) {
+                for (Tuple t : batch.getAllTuples()) {
+                    pq.add(new TupleWithId(t, i, curs[i]));
+                    curs[i]++;
+                }
+            } else {
+                try {
+                    instream[i].close();
+                    String dfname = "SortedRun-" + (numpass - 1) + "-" + (start + i) + "-" + this.hashCode();
+                    File f = new File(dfname);
+                    f.delete();
+                } catch (IOException io) {
+                    System.err.println("Distinct: Error in reading temporary file");
+                }
+            }
+        }
+
+        Batch outbatch = new Batch(batchsize);
+        while (!pq.isEmpty()) {
+            TupleWithId tuple = pq.poll();
+
+            if (prevtuple == null || Tuple.compareTuples(prevtuple, tuple.tuple, attrIndex, attrIndex) != 0) { // not duplicate
+                prevtuple = tuple.tuple;
+                outbatch.add(tuple.tuple);
+                if (outbatch.isFull()) {
+                    try {
+                        out.writeObject(outbatch);
+                    } catch (IOException io) {
+                        System.err.println("Distinct: error writing to temporary file");
+                        System.exit(1);
+                    }
+                    outbatch = new Batch(batchsize);
+                }
+            }
+
+            int runid = tuple.runid;
+            int nexttupleid = tuple.tupleid + 1;
+
+            // read next page for run into buffer
+            if (!done[runid] && nexttupleid % batchsize == 0) {
+                Batch batch = new Batch(batchsize);
+                try {
+                    batch = (Batch) instream[runid].readObject();
+                } catch (EOFException e) {
+                    try {
+                        instream[runid].close();
+                        done[runid] = true;
+                        String dfname = "SortedRun-" + (numpass - 1) + "-" + (start + runid) + "-" + this.hashCode();
+                        File f = new File(dfname);
+                        f.delete();
+                    } catch (IOException io) {
+                        System.err.println("Distinct: Error in reading temporary file");
+                    }
+                } catch (ClassNotFoundException c) {
+                    System.err.println("Distinct: Error in deserialising temporary file ");
+                    System.exit(1);
+                } catch (IOException io) {
+                    System.err.println("Distinct: Error in reading temporary file");
+                    System.exit(1);
+                }
+                if (batch != null && !batch.isEmpty()) {
+                    for (Tuple t : batch.getAllTuples()) {
+                        pq.add(new TupleWithId(t, runid, curs[runid]));
+                        curs[runid]++;
+                    }
+                } else {
+                    try {
+                        instream[runid].close();
+                        done[runid] = true;
+                        String dfname = "SortedRun-" + (numpass - 1) + "-" + (start + runid) + "-" + this.hashCode();
+                        File f = new File(dfname);
+                        f.delete();
+                    } catch (IOException io) {
+                        System.err.println("Distinct: Error in reading temporary file");
+                    }
+                }
+            }
+        }
+
+        if (!outbatch.isEmpty()) {
+            try {
+                out.writeObject(outbatch);
+            } catch (IOException io) {
+                System.err.println("Distinct: error writing to temporary file");
+                System.exit(1);
+            }
+        }
+
+        try {
+            out.close();
+        } catch (IOException io) {
+            System.out.println("Distinct: Error in reading temporary file");
+        }
+    }
+
+    public boolean close() {
+        return true;
+    }
 }
+
