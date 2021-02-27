@@ -122,6 +122,10 @@ public class CrossProduct extends Operator {
             return false;
     }
 
+    /**
+     * from input buffers performs cross product
+     * * And returns a page of output tuples
+     **/
     public Batch next() {
         int i, j, k;
         if (eosl == true && lblockcurs == 0 && lcurs == 0) {

@@ -36,17 +36,18 @@ public class Sort extends Operator {
         this.isAscending = isAscending;
     }
 
-
+    // compares tuples t1 and t2 based on the attributes to be sorted 
     private int compareTuples(Tuple t1, Tuple t2) {
         for (int index : attrIndex) {
             int res = Tuple.compareTuples(t1, t2, index, index);
             if (res != 0) {
-                return isAscending? res : res * -1;
+                return isAscending ? res : res * -1;
             }
         }
         return 0;
     }
 
+    // generate sorted runs from the base operator and write each run to a file
     private void generateSortedRuns() {
         Batch batch = base.next();
         while (batch != null) {
@@ -80,6 +81,7 @@ public class Sort extends Operator {
         }
     }
 
+    // merge sorted runs iteratively until one sorted run is produced
     private int mergeSortedRuns(int numpass, int numrun) {
         if (numrun == 1) {
             totalnumpass = numpass;
@@ -103,6 +105,8 @@ public class Sort extends Operator {
         return mergeSortedRuns(numpass + 1, numoutrun);
     }
 
+    // merge sorted runs between start (inclusive) and end (exclusive) to produce one sorted run and write to file
+    // note: end - start <= numbuff
     private void mergeSortedRunsRange(int start, int end, int numpass, int numrun) {
         ObjectInputStream[] instream = new ObjectInputStream[end - start];
         PriorityQueue<TupleWithId> pq = new PriorityQueue<>(batchsize, (t1, t2) -> compareTuples(t1.tuple, t2.tuple));
@@ -164,6 +168,7 @@ public class Sort extends Operator {
             }
         }
 
+        // add next tuple to outbatch
         Batch outbatch = new Batch(batchsize);
         while (!pq.isEmpty()) {
             TupleWithId tuple = pq.poll();
@@ -181,7 +186,7 @@ public class Sort extends Operator {
             int runid = tuple.runid;
             int nexttupleid = tuple.tupleid + 1;
 
-            // read next page for run into buffer
+            // read next page for run into buffer if there are no more tuples for that sorted run
             if (!done[runid] && nexttupleid % batchsize == 0) {
                 Batch batch = new Batch(batchsize);
                 try {
@@ -238,6 +243,11 @@ public class Sort extends Operator {
         }
     }
 
+    /**
+     * During open finds the index of the attributes to sort
+     * * Performs multi-way merge sort 
+     * * by generating sorted runs nad merging the sorted runs
+     **/
     public boolean open() {
         int tuplesize = schema.getTupleSize();
         batchsize = Batch.getPageSize() / tuplesize;
@@ -267,6 +277,9 @@ public class Sort extends Operator {
         return true;
     }
 
+    /**
+     * Returns a page of output tuples from the sorted run 
+     **/
     public Batch next() {
         if (eos) {
             close();
@@ -297,6 +310,9 @@ public class Sort extends Operator {
         return outbatch;
     }
 
+    /**
+     * Close the operator
+     */
     public boolean close() {
         return true;
     }

@@ -1,3 +1,7 @@
+/**
+ * To remove duplicates in the result
+ **/
+
 package qp.operators;
 
 import qp.utils.Attribute;
@@ -38,8 +42,14 @@ public class Distinct extends Operator {
     public void setNumBuff(int num) {
         this.numbuff = num;
     }
-    public boolean open() {
 
+    /**
+     * Opens the connection to the base operator
+     * * Also figures out what are the columns to be
+     * * projected from the base operator
+     * * and sort the table on the attributes to project removing duplicates
+     **/
+    public boolean open() {
         int tuplesize = schema.getTupleSize();
         batchsize = Batch.getPageSize() / tuplesize;
 
@@ -51,7 +61,7 @@ public class Distinct extends Operator {
             Attribute attr = attrset.get(i);
 
             if (attr.getAggType() != Attribute.NONE) {
-                System.err.println("Aggragation is not implemented.");
+                System.err.println("Aggregation is not implemented.");
                 System.exit(1);
             }
 
@@ -68,6 +78,10 @@ public class Distinct extends Operator {
         return true;
     }
 
+    /**
+     * Read next tuple from sorted relation 
+     * * and project relevant attributes removing duplicates
+     */
     public Batch next() {
         if (eos) {
             close();
@@ -109,6 +123,7 @@ public class Distinct extends Operator {
         return newDistinct;
     }
 
+    // compares tuples t1 and t2 based on the attributes to project
     private int compareTuples(Tuple t1, Tuple t2) {
         for (int index : attrIndex) {
             int res = Tuple.compareTuples(t1, t2, index, index);
@@ -119,6 +134,7 @@ public class Distinct extends Operator {
         return 0;
     }
 
+    // generate sorted runs with duplicates removed from the base operator and write each run to a file
     private void generateSortedRuns() {
         Batch batch = base.next();
         while (batch != null) {
@@ -153,6 +169,7 @@ public class Distinct extends Operator {
         }
     }
 
+    // merge sorted runs iteratively until one sorted run is produced
     private int mergeSortedRuns(int numpass, int numrun) {
         if (numrun == 1) {
             totalnumpass = numpass;
@@ -176,6 +193,9 @@ public class Distinct extends Operator {
         return mergeSortedRuns(numpass + 1, numoutrun);
     }
 
+    // merge sorted runs between start (inclusive) and end (exclusive) and remove duplicates
+    // to produce one sorted run and write to file
+    // note: end - start <= numbuff
     private void mergeSortedRunsRange(int start, int end, int numpass, int numrun) {
         ObjectInputStream[] instream = new ObjectInputStream[end - start];
         PriorityQueue<TupleWithId> pq = new PriorityQueue<>(batchsize, (t1, t2) -> compareTuples(t1.tuple, t2.tuple));
@@ -237,6 +257,7 @@ public class Distinct extends Operator {
             }
         }
 
+        // add next tuple to outbatch
         Batch outbatch = new Batch(batchsize);
         while (!pq.isEmpty()) {
             TupleWithId tuple = pq.poll();
@@ -258,7 +279,7 @@ public class Distinct extends Operator {
             int runid = tuple.runid;
             int nexttupleid = tuple.tupleid + 1;
 
-            // read next page for run into buffer
+            // read next page for run into buffer if there are no more tuples for that sorted run
             if (!done[runid] && nexttupleid % batchsize == 0) {
                 Batch batch = new Batch(batchsize);
                 try {
@@ -315,6 +336,9 @@ public class Distinct extends Operator {
         }
     }
 
+    /**
+     * Close the operator
+     */
     public boolean close() {
         return true;
     }

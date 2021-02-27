@@ -1,3 +1,7 @@
+/**
+ * To order the result
+ **/
+
 package qp.operators;
 
 import qp.utils.Attribute;
