@@ -1,5 +1,5 @@
 /**
- * Page Nested Join algorithm
+ * Compute Cross/Cartesian Product, using block nested join algo
  **/
 
 package qp.operators;
